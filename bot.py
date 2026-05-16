@@ -11,10 +11,10 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
-RUN_OPEN_HOUR = 6
-RUN_OPEN_MINUTE = 0
+RUN_OPEN_HOUR = 17
+RUN_OPEN_MINUTE = 30
 
-RUN_CLOSE_HOUR = 14
+RUN_CLOSE_HOUR = 18
 RUN_CLOSE_MINUTE = 30
 
 # ---------------------------
