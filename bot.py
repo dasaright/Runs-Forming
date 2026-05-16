@@ -123,4 +123,4 @@ async def on_ready():
 
 
 
-bot.run(os.getenv("MTUwNTI1ODE1NjQ5MjU5MTEzOQ.GuBbiY.N8qRZMHdKBAXVx6i1xKa7Ax_9Sw4IPFPbCsKnQ"))
+bot.run(os.getenv("DISCORD_TOKEN"))
