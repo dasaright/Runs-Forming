@@ -202,7 +202,12 @@ def build_embed(selected, waitlist, is_open):
 
     hours, minutes = get_time_until_open()
 
-    status = "🟢 runs begin at <t:1778956219:t> ({hours} hours {minutes} minutes)" if is_open else "🔴 CLOSED"
+    status = (
+        f"🟢 Runs begin at <t:1778956219:t> "
+        f"({hours}h {minutes}m)"
+        if is_open else
+        "🔴 CLOSED"
+    )
     embed.description = f"Status: **{status}**"
 
     roster = "\n".join(
@@ -328,35 +333,19 @@ async def scheduler():
 
 async def create_run(guild):
 
-    print("CREATE RUN TRIGGERED")
-    if active_run_lock.get(guild.id):
-        print("Run already being created — skipping duplicate")
-        return
-
-    active_run_lock[guild.id] = True
     channel = guild.get_channel(RUN_CHANNEL_ID)
 
     if channel is None:
         channel = await guild.fetch_channel(RUN_CHANNEL_ID)
 
-    if channel is None:
-        print("Run channel not found")
-        return
-
     cursor.execute("DELETE FROM signups WHERE guild_id=?", (guild.id,))
     conn.commit()
 
-    embed = discord.Embed(
-        title="🏃 Daily Run Open!",
-        description="Signups are now OPEN. Max 8 players."
-    )
+    embed = build_embed([], [], True)
 
     msg = await channel.send(embed=embed, view=RunView())
 
     active_messages[guild.id] = msg
-
-    set_run_state(guild.id, channel.id, msg.id, 1)
-    active_run_lock[guild.id] = False
 
 async def refresh_run_message(guild):
     if guild.id not in active_messages:
