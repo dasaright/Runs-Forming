@@ -11,6 +11,8 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
+RUN_CHANNEL_ID = 1505001264214315100
+
 RUN_OPEN_HOUR = 6
 RUN_OPEN_MINUTE = 0
 
@@ -162,33 +164,9 @@ def set_open_state(guild_id, is_open):
     """, (int(is_open), guild_id))
     conn.commit()
 
-def set_run_channel(guild_id, channel_id):
-    cursor.execute("""
-        INSERT OR REPLACE INTO guild_config (guild_id, channel_id)
-        VALUES (?, ?)
-    """, (guild_id, channel_id))
-    conn.commit()
-
-
-def get_run_channel(guild_id):
-    cursor.execute("""
-        SELECT channel_id FROM guild_config WHERE guild_id=?
-    """, (guild_id,))
-    row = cursor.fetchone()
-    return row[0] if row else None
-
 def is_officer(member: discord.Member):
     return any(role.name == "Officer" for role in member.roles)
 
-@bot.command()
-async def setrunchannel(ctx, channel: discord.TextChannel):
-
-    if not is_officer(ctx.author):
-        await ctx.send("❌ You need the Officer role to use this command.")
-        return
-
-    set_run_channel(ctx.guild.id, channel.id)
-    await ctx.send(f"✅ Run channel set to {channel.mention}")
 
 @bot.command()
 async def testrun(ctx):
@@ -348,16 +326,18 @@ async def scheduler():
 
 
 async def create_run(guild):
-    channel_id = get_run_channel(guild.id)
-    if not channel_id:
-        print(f"No run channel set for guild {guild.name}")
+
+    print("CREATE RUN TRIGGERED")
+
+    channel = guild.get_channel(RUN_CHANNEL_ID)
+
+    if channel is None:
+        channel = await guild.fetch_channel(RUN_CHANNEL_ID)
+
+    if channel is None:
+        print("Run channel not found")
         return
 
-    channel = guild.get_channel(channel_id)
-    if not channel:
-        return
-
-    # reset signups
     cursor.execute("DELETE FROM signups WHERE guild_id=?", (guild.id,))
     conn.commit()
 
