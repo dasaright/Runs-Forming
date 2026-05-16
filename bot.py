@@ -366,7 +366,7 @@ async def create_run(guild):
         description="Signups are now OPEN. Max 8 players."
     )
 
-    msg = await channel.send(embed=embed, view=RunView())
+    msg = await channel.send(embed=embed, await channel.send(embed=embed, view=RunView()))
 
     active_messages[guild.id] = msg
 
@@ -387,7 +387,7 @@ async def refresh_run_message(guild):
     embed = build_embed(selected, waitlist, is_open)
 
     try:
-        await msg.edit(embed=embed, view=RunView())
+        await msg.edit(embed=embed)
     except:
         pass
 
@@ -424,7 +424,7 @@ async def close_run(guild):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-
+    bot.add_view(RunView())
     refresh_loop.start()
     scheduler.start()
 
