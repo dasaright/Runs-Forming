@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS run_state (
 
 conn.commit()
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS guild_config (
+    guild_id INTEGER PRIMARY KEY,
+    channel_id INTEGER
+)
+""")
+conn.commit()
+
 # ---------------------------
 # HELPERS
 # ---------------------------
@@ -114,6 +122,34 @@ def set_open_state(guild_id, is_open):
         WHERE guild_id=?
     """, (int(is_open), guild_id))
     conn.commit()
+
+def set_run_channel(guild_id, channel_id):
+    cursor.execute("""
+        INSERT OR REPLACE INTO guild_config (guild_id, channel_id)
+        VALUES (?, ?)
+    """, (guild_id, channel_id))
+    conn.commit()
+
+
+def get_run_channel(guild_id):
+    cursor.execute("""
+        SELECT channel_id FROM guild_config WHERE guild_id=?
+    """, (guild_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+def is_officer(member: discord.Member):
+    return any(role.name == "Officer" for role in member.roles)
+
+@bot.command()
+async def setrunchannel(ctx, channel: discord.TextChannel):
+
+    if not is_officer(ctx.author):
+        await ctx.send("❌ You need the Officer role to use this command.")
+        return
+
+    set_run_channel(ctx.guild.id, channel.id)
+    await ctx.send(f"✅ Run channel set to {channel.mention}")
 
 
 # ---------------------------
@@ -237,7 +273,12 @@ async def scheduler():
 
 
 async def create_run(guild):
-    channel = discord.utils.get(guild.text_channels, name="general")
+    channel_id = get_run_channel(guild.id)
+    if not channel_id:
+        print(f"No run channel set for guild {guild.name}")
+        return
+
+    channel = guild.get_channel(channel_id)
     if not channel:
         return
 
