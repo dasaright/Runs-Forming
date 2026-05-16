@@ -366,7 +366,7 @@ async def create_run(guild):
         description="Signups are now OPEN. Max 8 players."
     )
 
-    msg = await channel.send(embed=embed, await channel.send(embed=embed, view=RunView()))
+    msg = await channel.send(embed=embed, view=RunView())
 
     active_messages[guild.id] = msg
 
