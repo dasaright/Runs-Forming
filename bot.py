@@ -2,7 +2,20 @@ import os
 import time
 import sqlite3
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
+from datetime import datetime, time as dtime
+import pytz
+
+# ---------------------------
+# CONFIG
+# ---------------------------
+EST = pytz.timezone("US/Eastern")
+
+RUN_OPEN_HOUR = 6
+RUN_OPEN_MINUTE = 0
+
+RUN_CLOSE_HOUR = 14
+RUN_CLOSE_MINUTE = 30
 
 # ---------------------------
 # INTENTS
@@ -14,7 +27,7 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ---------------------------
-# DATABASE (PERSISTENT)
+# DB
 # ---------------------------
 conn = sqlite3.connect("runs.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -28,28 +41,35 @@ CREATE TABLE IF NOT EXISTS signups (
     timestamp REAL
 )
 """)
-conn.commit()
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS run_state (
+    guild_id INTEGER PRIMARY KEY,
+    channel_id INTEGER,
+    message_id INTEGER,
+    is_open INTEGER
+)
+""")
+
+conn.commit()
 
 # ---------------------------
 # HELPERS
 # ---------------------------
-def is_guild_member(member: discord.Member):
-    return any(role.name == "Member" for role in member.roles)
+def is_guild_member(member):
+    return any(role.name == "Guild Member" for role in member.roles)
 
 
 def add_signup(guild_id, user_id, username, guild_member):
     cursor.execute("""
-        INSERT INTO signups (guild_id, user_id, username, guild_member, timestamp)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO signups VALUES (?, ?, ?, ?, ?)
     """, (guild_id, user_id, username, int(guild_member), time.time()))
     conn.commit()
 
 
 def remove_signup(guild_id, user_id):
     cursor.execute("""
-        DELETE FROM signups
-        WHERE guild_id = ? AND user_id = ?
+        DELETE FROM signups WHERE guild_id=? AND user_id=?
     """, (guild_id, user_id))
     conn.commit()
 
@@ -57,10 +77,8 @@ def remove_signup(guild_id, user_id):
 def load_signups(guild_id):
     cursor.execute("""
         SELECT user_id, username, guild_member, timestamp
-        FROM signups
-        WHERE guild_id = ?
+        FROM signups WHERE guild_id=?
     """, (guild_id,))
-
     rows = cursor.fetchall()
 
     return [
@@ -74,20 +92,49 @@ def load_signups(guild_id):
     ]
 
 
+def set_run_state(guild_id, channel_id, message_id, is_open):
+    cursor.execute("""
+        INSERT OR REPLACE INTO run_state
+        VALUES (?, ?, ?, ?)
+    """, (guild_id, channel_id, message_id, is_open))
+    conn.commit()
+
+
+def get_run_state(guild_id):
+    cursor.execute("""
+        SELECT channel_id, message_id, is_open
+        FROM run_state WHERE guild_id=?
+    """, (guild_id,))
+    return cursor.fetchone()
+
+
+def set_open_state(guild_id, is_open):
+    cursor.execute("""
+        UPDATE run_state SET is_open=?
+        WHERE guild_id=?
+    """, (int(is_open), guild_id))
+    conn.commit()
+
+
+# ---------------------------
+# LOGIC
+# ---------------------------
 def sort_and_split(signups):
     sorted_list = sorted(
         signups,
         key=lambda x: (
-            not x["guild_member"],  # guild first
-            x["time"]               # FIFO
+            not x["guild_member"],
+            x["time"]
         )
     )
-
     return sorted_list[:8], sorted_list[8:]
 
 
-def build_embed(selected, waitlist):
-    embed = discord.Embed(title="🏃 Run Signup System")
+def build_embed(selected, waitlist, is_open):
+    embed = discord.Embed(title="🏃 Daily Run")
+
+    status = "🟢 OPEN" if is_open else "🔴 CLOSED"
+    embed.description = f"Status: **{status}**"
 
     roster = "\n".join(
         f"{i+1}. <@{u['user_id']}>" for i, u in enumerate(selected)
@@ -97,45 +144,53 @@ def build_embed(selected, waitlist):
         f"{i+1}. <@{u['user_id']}>" for i, u in enumerate(waitlist)
     ) or "None"
 
-    embed.add_field(name="✅ Selected (Max 8)", value=roster, inline=False)
+    embed.add_field(name="✅ Selected (8 max)", value=roster, inline=False)
     embed.add_field(name="⏳ Waitlist", value=wait, inline=False)
 
     return embed
 
 
 # ---------------------------
-# UI VIEW (BUTTONS)
+# VIEW
 # ---------------------------
 class RunView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    def get_data(self, guild_id):
-        return load_signups(guild_id)
+    def is_open(self, guild_id):
+        state = get_run_state(guild_id)
+        return state and state[2] == 1
 
-    async def refresh(self, interaction: discord.Interaction):
-        signups = self.get_data(interaction.guild.id)
-
+    async def refresh(self, interaction):
+        signups = load_signups(interaction.guild.id)
         selected, waitlist = sort_and_split(signups)
-        embed = build_embed(selected, waitlist)
 
+        state = get_run_state(interaction.guild.id)
+        is_open = state and state[2] == 1
+
+        embed = build_embed(selected, waitlist, is_open)
         await interaction.message.edit(embed=embed, view=self)
 
     @discord.ui.button(label="Join Run", style=discord.ButtonStyle.green)
-    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def join(self, interaction, button):
 
-        guild_id = interaction.guild.id
+        state = get_run_state(interaction.guild.id)
+        if not state or state[2] == 0:
+            await interaction.response.send_message(
+                "Run is closed.", ephemeral=True
+            )
+            return
 
-        # prevent duplicates
-        current = load_signups(guild_id)
+        current = load_signups(interaction.guild.id)
+
         if any(u["user_id"] == interaction.user.id for u in current):
             await interaction.response.send_message(
-                "You're already signed up.", ephemeral=True
+                "Already signed up.", ephemeral=True
             )
             return
 
         add_signup(
-            guild_id,
+            interaction.guild.id,
             interaction.user.id,
             interaction.user.name,
             is_guild_member(interaction.user)
@@ -145,7 +200,14 @@ class RunView(discord.ui.View):
         await self.refresh(interaction)
 
     @discord.ui.button(label="Leave Run", style=discord.ButtonStyle.red)
-    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def leave(self, interaction, button):
+
+        state = get_run_state(interaction.guild.id)
+        if not state or state[2] == 0:
+            await interaction.response.send_message(
+                "Run is closed.", ephemeral=True
+            )
+            return
 
         remove_signup(interaction.guild.id, interaction.user.id)
 
@@ -154,31 +216,82 @@ class RunView(discord.ui.View):
 
 
 # ---------------------------
-# COMMANDS
+# SCHEDULE LOOP
 # ---------------------------
-@bot.command()
-async def run(ctx):
-    """Create a run signup panel"""
+@tasks.loop(minutes=1)
+async def scheduler():
+
+    now = datetime.now(EST)
+
+    guilds = bot.guilds
+
+    for guild in guilds:
+
+        # OPEN RUN (6:00 AM)
+        if now.hour == RUN_OPEN_HOUR and now.minute == RUN_OPEN_MINUTE:
+            await create_run(guild)
+
+        # CLOSE RUN (2:30 PM)
+        if now.hour == RUN_CLOSE_HOUR and now.minute == RUN_CLOSE_MINUTE:
+            await close_run(guild)
+
+
+async def create_run(guild):
+    channel = discord.utils.get(guild.text_channels, name="general")
+    if not channel:
+        return
+
+    # reset signups
+    cursor.execute("DELETE FROM signups WHERE guild_id=?", (guild.id,))
+    conn.commit()
 
     embed = discord.Embed(
-        title="🏃 Run Signup",
-        description="Click below to join or leave. Max 8 selected."
+        title="🏃 Daily Run Open!",
+        description="Signups are now OPEN. Max 8 players."
     )
 
-    view = RunView()
+    msg = await channel.send(embed=embed, view=RunView())
 
-    await ctx.send(embed=embed, view=view)
+    set_run_state(guild.id, channel.id, msg.id, 1)
+
+
+async def close_run(guild):
+    state = get_run_state(guild.id)
+    if not state:
+        return
+
+    channel_id, message_id, _ = state
+
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        return
+
+    try:
+        message = await channel.fetch_message(message_id)
+    except:
+        return
+
+    signups = load_signups(guild.id)
+    selected, waitlist = sort_and_split(signups)
+
+    embed = build_embed(selected, waitlist, False)
+    embed.title = "🏃 Daily Run CLOSED"
+
+    await message.edit(embed=embed, view=None)
+
+    set_open_state(guild.id, 0)
 
 
 # ---------------------------
-# READY EVENT
+# READY
 # ---------------------------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+    scheduler.start()
 
 
 # ---------------------------
-# START BOT (RAILWAY SAFE)
+# RUN BOT
 # ---------------------------
 bot.run(os.getenv("DISCORD_TOKEN"))
