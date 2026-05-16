@@ -12,7 +12,7 @@ import pytz
 EST = pytz.timezone("US/Eastern")
 
 active_run_lock = {}
-RUN_CHANNEL_ID = 1505001264214315100
+RUN_CHANNEL_ID = 1169288946707087440
 
 RUN_OPEN_HOUR = 6
 RUN_OPEN_MINUTE = 0
@@ -198,7 +198,7 @@ def sort_and_split(signups):
 
 
 def build_embed(selected, waitlist, is_open):
-    embed = discord.Embed(title="<:poggers:1505333070914392244> Guild Runs")
+    embed = discord.Embed(title="<:poggers:1413932730101665842> Guild Runs")
 
     hours, minutes = get_time_until_open()
 
