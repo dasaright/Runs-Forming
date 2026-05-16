@@ -11,6 +11,7 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
+active_run_lock = {}
 RUN_CHANNEL_ID = 1505001264214315100
 
 RUN_OPEN_HOUR = 6
@@ -328,7 +329,11 @@ async def scheduler():
 async def create_run(guild):
 
     print("CREATE RUN TRIGGERED")
+    if active_run_lock.get(guild.id):
+        print("Run already being created — skipping duplicate")
+        return
 
+    active_run_lock[guild.id] = True
     channel = guild.get_channel(RUN_CHANNEL_ID)
 
     if channel is None:
@@ -351,6 +356,7 @@ async def create_run(guild):
     active_messages[guild.id] = msg
 
     set_run_state(guild.id, channel.id, msg.id, 1)
+    active_run_lock[guild.id] = False
 
 async def refresh_run_message(guild):
     if guild.id not in active_messages:
