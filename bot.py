@@ -198,7 +198,7 @@ def sort_and_split(signups):
 
 
 def build_embed(selected, waitlist, is_open):
-    embed = discord.Embed(title=":poggers: Guild Runs")
+    embed = discord.Embed(title="<:poggers:1505333070914392244> Guild Runs")
 
     hours, minutes = get_time_until_open()
 
