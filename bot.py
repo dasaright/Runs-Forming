@@ -1,20 +1,77 @@
 import os
+import time
+import sqlite3
 import discord
 from discord.ext import commands
-import time
 
+# ---------------------------
+# INTENTS
+# ---------------------------
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Store signups per server (simple version)
-runs = {}  # guild_id -> list of signups
+# ---------------------------
+# DATABASE (PERSISTENT)
+# ---------------------------
+conn = sqlite3.connect("runs.db", check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS signups (
+    guild_id INTEGER,
+    user_id INTEGER,
+    username TEXT,
+    guild_member INTEGER,
+    timestamp REAL
+)
+""")
+conn.commit()
 
 
+# ---------------------------
+# HELPERS
+# ---------------------------
 def is_guild_member(member: discord.Member):
     return any(role.name == "Member" for role in member.roles)
+
+
+def add_signup(guild_id, user_id, username, guild_member):
+    cursor.execute("""
+        INSERT INTO signups (guild_id, user_id, username, guild_member, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (guild_id, user_id, username, int(guild_member), time.time()))
+    conn.commit()
+
+
+def remove_signup(guild_id, user_id):
+    cursor.execute("""
+        DELETE FROM signups
+        WHERE guild_id = ? AND user_id = ?
+    """, (guild_id, user_id))
+    conn.commit()
+
+
+def load_signups(guild_id):
+    cursor.execute("""
+        SELECT user_id, username, guild_member, timestamp
+        FROM signups
+        WHERE guild_id = ?
+    """, (guild_id,))
+
+    rows = cursor.fetchall()
+
+    return [
+        {
+            "user_id": r[0],
+            "username": r[1],
+            "guild_member": bool(r[2]),
+            "time": r[3]
+        }
+        for r in rows
+    ]
 
 
 def sort_and_split(signups):
@@ -22,7 +79,7 @@ def sort_and_split(signups):
         signups,
         key=lambda x: (
             not x["guild_member"],  # guild first
-            x["time"]
+            x["time"]               # FIFO
         )
     )
 
@@ -30,97 +87,98 @@ def sort_and_split(signups):
 
 
 def build_embed(selected, waitlist):
-    embed = discord.Embed(title="🏃 Run Signup")
+    embed = discord.Embed(title="🏃 Run Signup System")
 
-    roster_text = "\n".join(
+    roster = "\n".join(
         f"{i+1}. <@{u['user_id']}>" for i, u in enumerate(selected)
     ) or "None"
 
-    wait_text = "\n".join(
+    wait = "\n".join(
         f"{i+1}. <@{u['user_id']}>" for i, u in enumerate(waitlist)
     ) or "None"
 
-    embed.add_field(name="✅ Selected (8 max)", value=roster_text, inline=False)
-    embed.add_field(name="⏳ Waitlist", value=wait_text, inline=False)
+    embed.add_field(name="✅ Selected (Max 8)", value=roster, inline=False)
+    embed.add_field(name="⏳ Waitlist", value=wait, inline=False)
 
     return embed
 
 
+# ---------------------------
+# UI VIEW (BUTTONS)
+# ---------------------------
 class RunView(discord.ui.View):
-    def __init__(self, guild_id: int):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.guild_id = guild_id
 
-        if guild_id not in runs:
-            runs[guild_id] = []
+    def get_data(self, guild_id):
+        return load_signups(guild_id)
+
+    async def refresh(self, interaction: discord.Interaction):
+        signups = self.get_data(interaction.guild.id)
+
+        selected, waitlist = sort_and_split(signups)
+        embed = build_embed(selected, waitlist)
+
+        await interaction.message.edit(embed=embed, view=self)
 
     @discord.ui.button(label="Join Run", style=discord.ButtonStyle.green)
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         guild_id = interaction.guild.id
-        user = interaction.user
-
-        # initialize
-        if guild_id not in runs:
-            runs[guild_id] = []
 
         # prevent duplicates
-        for u in runs[guild_id]:
-            if u["user_id"] == user.id:
-                await interaction.response.send_message(
-                    "You're already signed up.", ephemeral=True
-                )
-                return
+        current = load_signups(guild_id)
+        if any(u["user_id"] == interaction.user.id for u in current):
+            await interaction.response.send_message(
+                "You're already signed up.", ephemeral=True
+            )
+            return
 
-        runs[guild_id].append({
-            "user_id": user.id,
-            "guild_member": is_guild_member(user),
-            "time": time.time()
-        })
+        add_signup(
+            guild_id,
+            interaction.user.id,
+            interaction.user.name,
+            is_guild_member(interaction.user)
+        )
 
-        await self.update_message(interaction)
+        await interaction.response.defer()
+        await self.refresh(interaction)
 
     @discord.ui.button(label="Leave Run", style=discord.ButtonStyle.red)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        guild_id = interaction.guild.id
+        remove_signup(interaction.guild.id, interaction.user.id)
 
-        if guild_id in runs:
-            runs[guild_id] = [
-                u for u in runs[guild_id] if u["user_id"] != interaction.user.id
-            ]
-
-        await self.update_message(interaction)
-
-    async def update_message(self, interaction):
-        guild_id = interaction.guild.id
-        signups = runs.get(guild_id, [])
-
-        selected, waitlist = sort_and_split(signups)
-
-        embed = build_embed(selected, waitlist)
-
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.defer()
+        await self.refresh(interaction)
 
 
+# ---------------------------
+# COMMANDS
+# ---------------------------
 @bot.command()
 async def run(ctx):
-    """Creates a new run signup panel"""
+    """Create a run signup panel"""
 
-    runs[ctx.guild.id] = []
+    embed = discord.Embed(
+        title="🏃 Run Signup",
+        description="Click below to join or leave. Max 8 selected."
+    )
 
-    embed = discord.Embed(title="🏃 Run Signup")
-    embed.description = "Click below to join or leave the run (max 8 players)."
-
-    view = RunView(ctx.guild.id)
+    view = RunView()
 
     await ctx.send(embed=embed, view=view)
 
 
+# ---------------------------
+# READY EVENT
+# ---------------------------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
 
-
+# ---------------------------
+# START BOT (RAILWAY SAFE)
+# ---------------------------
 bot.run(os.getenv("DISCORD_TOKEN"))
