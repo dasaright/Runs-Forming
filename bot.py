@@ -11,11 +11,37 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
-RUN_OPEN_HOUR = 17
-RUN_OPEN_MINUTE = 30
+RUN_OPEN_HOUR = 6
+RUN_OPEN_MINUTE = 0
 
-RUN_CLOSE_HOUR = 18
+def get_time_until_open():
+    now = datetime.now(EST)
+
+    today_open = now.replace(
+        hour=RUN_OPEN_HOUR,
+        minute=RUN_OPEN_MINUTE,
+        second=0,
+        microsecond=0
+    )
+
+    # if we are past today's open, use next day
+    if now > today_open:
+        today_open = today_open.replace(day=now.day + 1)
+
+    delta = today_open - now
+
+    total_seconds = int(delta.total_seconds())
+
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+
+    return hours, minutes
+
+RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
+
+user_cooldowns = {}
+COOLDOWN_SECONDS = 5
 
 # ---------------------------
 # INTENTS
@@ -25,6 +51,7 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+active_messages = {}  # guild_id -> message object
 
 # ---------------------------
 # DB
@@ -64,8 +91,20 @@ conn.commit()
 # ---------------------------
 # HELPERS
 # ---------------------------
+
+def check_cooldown(user_id):
+    now = time.time()
+
+    last = user_cooldowns.get(user_id, 0)
+
+    if now - last < COOLDOWN_SECONDS:
+        return False
+
+    user_cooldowns[user_id] = now
+    return True
+
 def is_guild_member(member):
-    return any(role.name == "Guild Member" for role in member.roles)
+    return any(role.name == "Member" for role in member.roles)
 
 
 def add_signup(guild_id, user_id, username, guild_member):
@@ -151,6 +190,19 @@ async def setrunchannel(ctx, channel: discord.TextChannel):
     set_run_channel(ctx.guild.id, channel.id)
     await ctx.send(f"✅ Run channel set to {channel.mention}")
 
+@bot.command()
+async def testrun(ctx):
+
+    if not is_officer(ctx.author):
+        await ctx.send("❌ Officer role required.")
+        return
+
+    guild = ctx.guild
+
+    # manually trigger run creation
+    await create_run(guild)
+
+    await ctx.send("🧪 Test run created.")
 
 # ---------------------------
 # LOGIC
@@ -167,9 +219,11 @@ def sort_and_split(signups):
 
 
 def build_embed(selected, waitlist, is_open):
-    embed = discord.Embed(title="🏃 Daily Run")
+    embed = discord.Embed(title=":poggers: Guild Runs")
 
-    status = "🟢 OPEN" if is_open else "🔴 CLOSED"
+    hours, minutes = get_time_until_open()
+
+    status = "🟢 runs begin at <t:1778956219:t> ({hours} hours {minutes} minutes)" if is_open else "🔴 CLOSED"
     embed.description = f"Status: **{status}**"
 
     roster = "\n".join(
@@ -210,6 +264,13 @@ class RunView(discord.ui.View):
     @discord.ui.button(label="Join Run", style=discord.ButtonStyle.green)
     async def join(self, interaction, button):
 
+        if not check_cooldown(interaction.user.id):
+            await interaction.response.send_message(
+                "⏳ Slow down — you’re clicking too fast.",
+                ephemeral=True
+            )
+            return
+
         state = get_run_state(interaction.guild.id)
         if not state or state[2] == 0:
             await interaction.response.send_message(
@@ -238,6 +299,13 @@ class RunView(discord.ui.View):
     @discord.ui.button(label="Leave Run", style=discord.ButtonStyle.red)
     async def leave(self, interaction, button):
 
+        if not check_cooldown(interaction.user.id):
+            await interaction.response.send_message(
+                "⏳ Slow down — you’re clicking too fast.",
+                ephemeral=True
+            )
+            return
+
         state = get_run_state(interaction.guild.id)
         if not state or state[2] == 0:
             await interaction.response.send_message(
@@ -254,6 +322,13 @@ class RunView(discord.ui.View):
 # ---------------------------
 # SCHEDULE LOOP
 # ---------------------------
+
+@tasks.loop(minutes=5)
+async def refresh_loop():
+
+    for guild in bot.guilds:
+        await refresh_run_message(guild)
+
 @tasks.loop(minutes=1)
 async def scheduler():
 
@@ -293,8 +368,28 @@ async def create_run(guild):
 
     msg = await channel.send(embed=embed, view=RunView())
 
+    active_messages[guild.id] = msg
+
     set_run_state(guild.id, channel.id, msg.id, 1)
 
+async def refresh_run_message(guild):
+    if guild.id not in active_messages:
+        return
+
+    msg = active_messages[guild.id]
+
+    signups = load_signups(guild.id)
+    selected, waitlist = sort_and_split(signups)
+
+    state = get_run_state(guild.id)
+    is_open = state and state[2] == 1
+
+    embed = build_embed(selected, waitlist, is_open)
+
+    try:
+        await msg.edit(embed=embed, view=RunView())
+    except:
+        pass
 
 async def close_run(guild):
     state = get_run_state(guild.id)
@@ -329,8 +424,9 @@ async def close_run(guild):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    scheduler.start()
 
+    refresh_loop.start()
+    scheduler.start()
 
 # ---------------------------
 # RUN BOT
