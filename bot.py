@@ -12,10 +12,12 @@ import pytz
 EST = pytz.timezone("US/Eastern")
 
 active_run_lock = {}
-RUN_CHANNEL_ID = 1169288946707087440
+#RUN_CHANNEL_ID = 1169288946707087440 #Low discord
+RUN_CHANNEL_ID = 1505001264214315100 #mine
 
-RUN_OPEN_HOUR = 6
-RUN_OPEN_MINUTE = 0
+
+RUN_OPEN_HOUR = 9
+RUN_OPEN_MINUTE = 53
 
 def get_time_until_open():
     now = datetime.now(EST)
