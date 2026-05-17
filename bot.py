@@ -354,6 +354,13 @@ async def create_run(guild):
     embed = build_embed([], [], True)
 
     msg = await channel.send(embed=embed, view=RunView())
+    
+    set_run_state(
+        guild.id,
+        channel.id,
+        msg.id,
+        1
+    )
 
     active_messages[guild.id] = msg
 
