@@ -17,7 +17,7 @@ RUN_CHANNEL_ID = 1505001264214315100 #mine
 
 
 RUN_OPEN_HOUR = 9
-RUN_OPEN_MINUTE = 53
+RUN_OPEN_MINUTE = 55
 
 def get_time_until_open():
     now = datetime.now(EST)
