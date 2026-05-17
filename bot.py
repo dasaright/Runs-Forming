@@ -247,7 +247,11 @@ class RunView(discord.ui.View):
         embed = build_embed(selected, waitlist, is_open)
         await interaction.message.edit(embed=embed, view=self)
 
-    @discord.ui.button(label="Join Run", style=discord.ButtonStyle.green)
+    @discord.ui.button(
+        label="Join Run",
+        style=discord.ButtonStyle.green,
+        custom_id="join_run_button"
+    )
     async def join(self, interaction, button):
 
         if not check_cooldown(interaction.user.id):
@@ -282,7 +286,11 @@ class RunView(discord.ui.View):
         await interaction.response.defer()
         await self.refresh(interaction)
 
-    @discord.ui.button(label="Leave Run", style=discord.ButtonStyle.red)
+    @discord.ui.button(
+        label="Leave Run",
+        style=discord.ButtonStyle.red,
+        custom_id="leave_run_button"
+    )
     async def leave(self, interaction, button):
 
         if not check_cooldown(interaction.user.id):
