@@ -215,7 +215,6 @@ def build_embed(selected, waitlist, is_open):
 
     status = (
         f"🟢 Runs begin at <t:1778956219:t> "
-        f"({hours}h {minutes}m)"
         if is_open else
         "🔴 CLOSED"
     )
@@ -233,7 +232,7 @@ def build_embed(selected, waitlist, is_open):
     ) or "None"
 
     embed.add_field(
-        name="✅ Selected (8 max)",
+        name="✅ Ticked",
         value=roster,
         inline=False
     )
