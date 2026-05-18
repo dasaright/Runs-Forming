@@ -55,6 +55,24 @@ def get_time_until_open():
 
 user_cooldowns = {}
 
+def get_run_timestamp():
+
+    now = datetime.now(EST)
+
+    target = now.replace(
+        hour=RUN_CLOSE_HOUR,
+        minute=RUN_CLOSE_MINUTE,
+        second=0,
+        microsecond=0
+    )
+
+    # if today's run already passed, use tomorrow
+    if now > target:
+        target = target + timedelta(days=1)
+
+    return int(target.timestamp())
+
+
 def check_cooldown(user_id):
     now = time.time()
 
@@ -224,8 +242,10 @@ def build_embed(selected, waitlist, is_open):
         title="<:poggers:1413932730101665842> Guild Runs"
     )
 
+    run_timestamp = get_run_timestamp()
     status = (
-        f"🟢 Runs begin at <t:1778956219:t> "
+        f"🟢 Runs begin at <t:{run_timestamp}:t> "
+        f"({hours}h {minutes}m)"
         if is_open else
         "🔴 CLOSED"
     )
