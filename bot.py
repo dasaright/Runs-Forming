@@ -478,15 +478,6 @@ async def refresh_loop():
     for guild in bot.guilds:
         await refresh_run_message(guild)
 
-
-@scheduler.before_loop
-async def before_scheduler():
-    await bot.wait_until_ready()
-
-@refresh_loop.before_loop
-async def before_refresh():
-    await bot.wait_until_ready()
-
 @tasks.loop(minutes=1)
 async def scheduler():
 
@@ -519,6 +510,13 @@ async def scheduler():
 
             await close_run(guild)
 
+@scheduler.before_loop
+async def before_scheduler():
+    await bot.wait_until_ready()
+
+@refresh_loop.before_loop
+async def before_refresh():
+    await bot.wait_until_ready()
 
 # ---------------------------
 # COMMANDS
