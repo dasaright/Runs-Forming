@@ -14,8 +14,8 @@ EST = pytz.timezone("US/Eastern")
 #RUN_CHANNEL_ID = 1169288946707087440 #low
 RUN_CHANNEL_ID = 1505001264214315100 #mine
 
-RUN_OPEN_HOUR = 21
-RUN_OPEN_MINUTE = 20
+RUN_OPEN_HOUR = 8
+RUN_OPEN_MINUTE = 0
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
@@ -54,24 +54,6 @@ def get_time_until_open():
 
 
 user_cooldowns = {}
-
-def get_run_timestamp():
-
-    now = datetime.now(EST)
-
-    target = now.replace(
-        hour=RUN_CLOSE_HOUR,
-        minute=RUN_CLOSE_MINUTE,
-        second=0,
-        microsecond=0
-    )
-
-    # if today's run already passed, use tomorrow
-    if now > target:
-        target = target + timedelta(days=1)
-
-    return int(target.timestamp())
-
 
 def check_cooldown(user_id):
     now = time.time()
@@ -112,7 +94,7 @@ cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS signups (
-    message_id INTEGER,
+    guild_id INTEGER,
     user_id INTEGER,
     username TEXT,
     guild_member INTEGER,
@@ -134,42 +116,33 @@ conn.commit()
 # ---------------------------
 # DATABASE HELPERS
 # ---------------------------
-def add_signup(message_id, user_id, username, guild_member):
-
+def add_signup(guild_id, user_id, username, guild_member):
     cursor.execute("""
-        INSERT INTO signups
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO signups VALUES (?, ?, ?, ?, ?)
     """, (
-        message_id,
+        guild_id,
         user_id,
         username,
         int(guild_member),
         time.time()
     ))
-
     conn.commit()
 
 
-def remove_signup(message_id, user_id):
-
+def remove_signup(guild_id, user_id):
     cursor.execute("""
         DELETE FROM signups
-        WHERE message_id=? AND user_id=?
-    """, (
-        message_id,
-        user_id
-    ))
-
+        WHERE guild_id=? AND user_id=?
+    """, (guild_id, user_id))
     conn.commit()
 
 
-def load_signups(message_id):
-
+def load_signups(guild_id):
     cursor.execute("""
         SELECT user_id, username, guild_member, timestamp
         FROM signups
-        WHERE message_id=?
-    """, (message_id,))
+        WHERE guild_id=?
+    """, (guild_id,))
 
     rows = cursor.fetchall()
 
@@ -242,10 +215,8 @@ def build_embed(selected, waitlist, is_open):
         title="<:poggers:1413932730101665842> Guild Runs"
     )
 
-    run_timestamp = get_run_timestamp()
     status = (
-        f"🟢 Runs begin at <t:{run_timestamp}:t> "
-        f"({hours}h {minutes}m)"
+        f"🟢 Runs begin at <t:1778956219:t> "
         if is_open else
         "🔴 CLOSED"
     )
@@ -287,11 +258,11 @@ class RunView(discord.ui.View):
 
     async def refresh(self, interaction):
 
-        signups = load_signups(interaction.message.id)
+        signups = load_signups(interaction.guild.id)
 
         selected, waitlist = sort_and_split(signups)
 
-        state = get_run_state(interaction.message.id)
+        state = get_run_state(interaction.guild.id)
 
         is_open = state and state[2] == 1
 
@@ -313,7 +284,7 @@ class RunView(discord.ui.View):
             )
             return
 
-        state = get_run_state(interaction.message.id)
+        state = get_run_state(interaction.guild.id)
 
         if not state or state[2] == 0:
             await interaction.response.send_message(
@@ -322,7 +293,7 @@ class RunView(discord.ui.View):
             )
             return
 
-        current = load_signups(interaction.message.id)
+        current = load_signups(interaction.guild.id)
 
         if any(u["user_id"] == interaction.user.id for u in current):
             await interaction.response.send_message(
@@ -332,7 +303,7 @@ class RunView(discord.ui.View):
             return
 
         add_signup(
-            interaction.message.id,
+            interaction.guild.id,
             interaction.user.id,
             interaction.user.name,
             is_guild_member(interaction.user)
@@ -356,7 +327,7 @@ class RunView(discord.ui.View):
             )
             return
 
-        state = get_run_state(interaction.message.id)
+        state = get_run_state(interaction.guild.id)
 
         if not state or state[2] == 0:
             await interaction.response.send_message(
@@ -366,7 +337,7 @@ class RunView(discord.ui.View):
             return
 
         remove_signup(
-            interaction.message.id,
+            interaction.guild.id,
             interaction.user.id
         )
 
@@ -390,6 +361,8 @@ async def create_run(guild):
         return
 
     cursor.execute("""
+        DELETE FROM signups
+        WHERE guild_id=?
     """, (guild.id,))
 
     conn.commit()
@@ -436,7 +409,7 @@ async def refresh_run_message(guild):
     except:
         return
 
-    signups = load_signups(message_id)
+    signups = load_signups(guild.id)
 
     selected, waitlist = sort_and_split(signups)
 
@@ -474,7 +447,7 @@ async def close_run(guild):
     except:
         return
 
-    signups = load_signups(message_id)
+    signups = load_signups(guild.id)
 
     selected, waitlist = sort_and_split(signups)
 
