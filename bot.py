@@ -11,16 +11,16 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
-#RUN_CHANNEL_ID = 1169288946707087440 #low
-RUN_CHANNEL_ID = 1505001264214315100 #mine
+RUN_CHANNEL_ID = 1169288946707087440 #low
+#RUN_CHANNEL_ID = 1505001264214315100 #mine
 
 RUN_OPEN_HOUR = 10
-RUN_OPEN_MINUTE = 15
+RUN_OPEN_MINUTE = 20
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
 
-COOLDOWN_SECONDS = 2
+COOLDOWN_SECONDS = 1
 
 last_run_date = None
 last_close_date = None
@@ -245,7 +245,7 @@ def build_embed(selected, waitlist, is_open):
     run_timestamp = get_run_timestamp()
     status = (
         f"🟢 Runs begin at <t:{run_timestamp}:t> "
-        f"({hours}h {minutes}m)"
+        f"(in {hours}h {minutes}m)"
         if is_open else
         "🔴 CLOSED"
     )
