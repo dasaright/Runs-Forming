@@ -14,13 +14,13 @@ EST = pytz.timezone("US/Eastern")
 #RUN_CHANNEL_ID = 1169288946707087440 #low
 RUN_CHANNEL_ID = 1505001264214315100 #mine
 
-RUN_OPEN_HOUR = 21
-RUN_OPEN_MINUTE = 20
+RUN_OPEN_HOUR = 10
+RUN_OPEN_MINUTE = 15
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
 
-COOLDOWN_SECONDS = 1
+COOLDOWN_SECONDS = 2
 
 last_run_date = None
 last_close_date = None
@@ -291,7 +291,7 @@ class RunView(discord.ui.View):
 
         selected, waitlist = sort_and_split(signups)
 
-        state = get_run_state(interaction.message.id)
+        state = get_run_state(interaction.guild.id)
 
         is_open = state and state[2] == 1
 
@@ -313,7 +313,7 @@ class RunView(discord.ui.View):
             )
             return
 
-        state = get_run_state(interaction.message.id)
+        state = get_run_state(interaction.guild.id)
 
         if not state or state[2] == 0:
             await interaction.response.send_message(
@@ -356,7 +356,7 @@ class RunView(discord.ui.View):
             )
             return
 
-        state = get_run_state(interaction.message.id)
+        state = get_run_state(interaction.guild.id)
 
         if not state or state[2] == 0:
             await interaction.response.send_message(
@@ -388,11 +388,6 @@ async def create_run(guild):
     if channel is None:
         print("Run channel not found.")
         return
-
-    cursor.execute("""
-    """, (guild.id,))
-
-    conn.commit()
 
     embed = build_embed([], [], True)
 
