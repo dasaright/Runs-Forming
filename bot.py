@@ -554,11 +554,6 @@ async def testrun(ctx):
 
     await create_run(ctx.guild)
 
-    await ctx.send(
-        "🧪 Test run created."
-    )
-
-
 # ---------------------------
 # READY
 # ---------------------------
