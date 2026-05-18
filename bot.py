@@ -11,11 +11,11 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
-RUN_CHANNEL_ID = 1169288946707087440 #low
-#RUN_CHANNEL_ID = 1505001264214315100 #mine
+#RUN_CHANNEL_ID = 1169288946707087440 #low
+RUN_CHANNEL_ID = 1505001264214315100 #mine
 
-RUN_OPEN_HOUR = 10
-RUN_OPEN_MINUTE = 10
+RUN_OPEN_HOUR = 20
+RUN_OPEN_MINUTE = 45
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
@@ -29,19 +29,21 @@ last_close_date = None
 # HELPERS
 # ---------------------------
 def get_time_until_open():
+
     now = datetime.now(EST)
 
-    today_open = now.replace(
-        hour=RUN_OPEN_HOUR,
-        minute=RUN_OPEN_MINUTE,
+    target = now.replace(
+        hour=RUN_CLOSE_HOUR,
+        minute=RUN_CLOSE_MINUTE,
         second=0,
         microsecond=0
     )
 
-    if now > today_open:
-        today_open = today_open + timedelta(days=1)
+    # if already past today's close, use tomorrow
+    if now > target:
+        target = target + timedelta(days=1)
 
-    delta = today_open - now
+    delta = target - now
 
     total_seconds = int(delta.total_seconds())
 
@@ -476,6 +478,14 @@ async def refresh_loop():
     for guild in bot.guilds:
         await refresh_run_message(guild)
 
+
+@scheduler.before_loop
+async def before_scheduler():
+    await bot.wait_until_ready()
+
+@refresh_loop.before_loop
+async def before_refresh():
+    await bot.wait_until_ready()
 
 @tasks.loop(minutes=1)
 async def scheduler():
