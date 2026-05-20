@@ -243,23 +243,36 @@ def build_embed(selected, waitlist, is_open):
     )
 
     run_timestamp = get_run_timestamp()
-    status = (
-        f"🟢 Runs begin at <t:{run_timestamp}:t> "
-        #f"(in {hours}h {minutes}m)"
+    timing = (
+        f"🟢 Runs begin <t:{run_timestamp}:t>\n"
+        f"⏳ <t:{run_timestamp}:R>"
         if is_open else
         "🔴 CLOSED"
     )
 
-    embed.description = f"Status: **{status}**"
+    signup_count = len(selected)
+
+    now_ts = int(datetime.now(EST).timestamp())
+
+    if now_ts >= run_timestamp:
+        status = "🔴 CLOSED"
+
+    elif signup_count >= 6:
+        status = f"🟢 {signup_count} ticked"
+
+    else:
+        status = f"🟠 {signup_count} ticked"
+
+    embed.description = f"{timing}\n\n{status}"
 
     roster = "\n".join(
-        f"{i+1}. <@{u['user_id']}>"
+        f"{i + 1}. <@{u['user_id']}>"
         for i, u in enumerate(selected)
     ) or "None"
 
     wait = "\n".join(
-        f"{i+1}. <@{u['user_id']}>"
-        for i, u in enumerate(waitlist)
+        f"<@{u['user_id']}>"
+        for u in waitlist
     ) or "None"
 
     embed.add_field(
