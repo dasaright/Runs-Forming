@@ -336,12 +336,14 @@ class RunView(discord.ui.View):
 
         state = get_run_state(interaction.guild.id)
 
-        if not state or state[2] == 0:
-            await interaction.response.send_message(
-                "Run is closed.",
-                ephemeral=True
-            )
-            return
+        # if not state or state[2] == 0:
+        #     await interaction.response.send_message(
+        #         "Run is closed.",
+        #         ephemeral=True
+        #     )
+        #     return
+
+        is_open = True
 
         current = load_signups(interaction.message.id)
 
@@ -379,12 +381,14 @@ class RunView(discord.ui.View):
 
         state = get_run_state(interaction.guild.id)
 
-        if not state or state[2] == 0:
-            await interaction.response.send_message(
-                "Run is closed.",
-                ephemeral=True
-            )
-            return
+        # if not state or state[2] == 0:
+        #     await interaction.response.send_message(
+        #         "Run is closed.",
+        #         ephemeral=True
+        #     )
+        #     return
+
+        is_open = True
 
         await interaction.response.defer()
 
