@@ -4,7 +4,7 @@ import sqlite3
 import discord
 import asyncio
 from discord.ext import commands, tasks
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, timedelta
 import pytz
 
 # ---------------------------
@@ -29,6 +29,8 @@ COOLDOWN_SECONDS = 1
 last_run_date = None
 last_close_date = None
 
+user_cooldowns = {}
+
 # ---------------------------
 # HELPERS
 # ---------------------------
@@ -43,9 +45,8 @@ def get_time_until_open():
         microsecond=0
     )
 
-    # if already past today's close, use tomorrow
     if now > target:
-        target = target + timedelta(days=1)
+        target += timedelta(days=1)
 
     delta = target - now
 
@@ -56,8 +57,6 @@ def get_time_until_open():
 
     return hours, minutes
 
-
-user_cooldowns = {}
 
 def get_run_timestamp():
 
@@ -70,14 +69,14 @@ def get_run_timestamp():
         microsecond=0
     )
 
-    # if today's run already passed, use tomorrow
     if now > target:
-        target = target + timedelta(days=1)
+        target += timedelta(days=1)
 
     return int(target.timestamp())
 
 
 def check_cooldown(user_id):
+
     now = time.time()
 
     last = user_cooldowns.get(user_id, 0)
@@ -86,14 +85,36 @@ def check_cooldown(user_id):
         return False
 
     user_cooldowns[user_id] = now
+
     return True
 
+def has_run_today(guild_id):
+
+    now = datetime.now(EST)
+
+    start_of_day = now.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0
+    ).timestamp()
+
+    cursor.execute("""
+        SELECT message_id
+        FROM run_state
+        WHERE guild_id=?
+        AND message_id IS NOT NULL
+    """, (guild_id,))
+
+    rows = cursor.fetchall()
+
+    return len(rows) > 0
 
 def is_guild_member(member):
     return any(role.name == "Member" for role in member.roles)
 
 
-def is_officer(member: discord.Member):
+def is_officer(member):
     return any(role.name == "Officer" for role in member.roles)
 
 
@@ -105,8 +126,6 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-active_messages = {}
 
 # ---------------------------
 # DATABASE
@@ -126,9 +145,9 @@ CREATE TABLE IF NOT EXISTS signups (
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS run_state (
-    guild_id INTEGER PRIMARY KEY,
+    message_id INTEGER PRIMARY KEY,
+    guild_id INTEGER,
     channel_id INTEGER,
-    message_id INTEGER,
     is_open INTEGER
 )
 """)
@@ -188,38 +207,56 @@ def load_signups(message_id):
     ]
 
 
-def set_run_state(guild_id, channel_id, message_id, is_open):
+def set_run_state(message_id, guild_id, channel_id, is_open):
+
     cursor.execute("""
         INSERT OR REPLACE INTO run_state
         VALUES (?, ?, ?, ?)
     """, (
+        message_id,
         guild_id,
         channel_id,
-        message_id,
         int(is_open)
     ))
+
     conn.commit()
 
 
-def get_run_state(guild_id):
+def get_run_state(message_id):
+
     cursor.execute("""
-        SELECT channel_id, message_id, is_open
+        SELECT guild_id, channel_id, is_open
+        FROM run_state
+        WHERE message_id=?
+    """, (message_id,))
+
+    return cursor.fetchone()
+
+
+def get_latest_run(guild_id):
+
+    cursor.execute("""
+        SELECT message_id, channel_id, is_open
         FROM run_state
         WHERE guild_id=?
+        ORDER BY message_id DESC
+        LIMIT 1
     """, (guild_id,))
 
     return cursor.fetchone()
 
 
-def set_open_state(guild_id, is_open):
+def set_open_state(message_id, is_open):
+
     cursor.execute("""
         UPDATE run_state
         SET is_open=?
-        WHERE guild_id=?
+        WHERE message_id=?
     """, (
         int(is_open),
-        guild_id
+        message_id
     ))
+
     conn.commit()
 
 
@@ -227,6 +264,7 @@ def set_open_state(guild_id, is_open):
 # LOGIC
 # ---------------------------
 def sort_and_split(signups):
+
     sorted_list = sorted(
         signups,
         key=lambda x: (
@@ -240,30 +278,44 @@ def sort_and_split(signups):
 
 def build_embed(selected, waitlist, is_open):
 
-    hours, minutes = get_time_until_open()
-
     embed = discord.Embed(
         title="<:poggers:1413932730101665842> Guild Runs"
     )
 
     run_timestamp = get_run_timestamp()
-    timing = (
-        f"Runs start <t:{run_timestamp}:t>\n"
-        f"⏳ <t:{run_timestamp}:R>"
-        if is_open else
-        "🔴 CLOSED"
-    )
+
+    now = datetime.now(EST)
+
+    current_minutes = now.hour * 60 + now.minute
+    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
+
+    is_closed = current_minutes >= close_minutes
+
+    if is_closed:
+
+        timing = "🔴 CLOSED"
+
+    else:
+
+        timing = (
+            f"Runs start <t:{run_timestamp}:t>\n"
+            f"⏳ <t:{run_timestamp}:R>"
+        )
 
     signup_count = len(selected)
 
-    now_ts = int(datetime.now(EST).timestamp())
+    now = datetime.now(EST)
 
-    if now_ts >= run_timestamp:
+    current_minutes = now.hour * 60 + now.minute
+    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
+
+    is_closed = current_minutes >= close_minutes
+
+    if is_closed:
         status = "🔴 CLOSED"
 
     elif signup_count == 0:
-        status = f"🔴 no tickers spotted"
-
+        status = "🔴 no tickers spotted"
 
     elif signup_count >= 6:
         status = f"🟢 {signup_count} ticked"
@@ -271,7 +323,7 @@ def build_embed(selected, waitlist, is_open):
     else:
         status = f"🟠 {signup_count} ticked"
 
-    embed.description = f"{timing}\n"
+    embed.description = timing
 
     roster = "\n".join(
         f"<@{u['user_id']}>"
@@ -312,9 +364,9 @@ class RunView(discord.ui.View):
 
         selected, waitlist = sort_and_split(signups)
 
-        state = get_run_state(interaction.guild.id)
+        state = get_run_state(interaction.message.id)
 
-        is_open = state and state[2] == 1
+        is_open = True if state else False
 
         embed = build_embed(selected, waitlist, is_open)
 
@@ -328,30 +380,23 @@ class RunView(discord.ui.View):
     async def join(self, interaction, button):
 
         if not check_cooldown(interaction.user.id):
+
             await interaction.response.send_message(
                 "⏳ Slow down — you’re clicking too fast.",
                 ephemeral=True
             )
+
             return
-
-        state = get_run_state(interaction.guild.id)
-
-        # if not state or state[2] == 0:
-        #     await interaction.response.send_message(
-        #         "Run is closed.",
-        #         ephemeral=True
-        #     )
-        #     return
-
-        is_open = True
 
         current = load_signups(interaction.message.id)
 
         if any(u["user_id"] == interaction.user.id for u in current):
+
             await interaction.response.send_message(
                 "Already signed up.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.defer()
@@ -373,22 +418,13 @@ class RunView(discord.ui.View):
     async def leave(self, interaction, button):
 
         if not check_cooldown(interaction.user.id):
+
             await interaction.response.send_message(
                 "⏳ Slow down — you’re clicking too fast.",
                 ephemeral=True
             )
+
             return
-
-        state = get_run_state(interaction.guild.id)
-
-        # if not state or state[2] == 0:
-        #     await interaction.response.send_message(
-        #         "Run is closed.",
-        #         ephemeral=True
-        #     )
-        #     return
-
-        is_open = True
 
         await interaction.response.defer()
 
@@ -397,8 +433,6 @@ class RunView(discord.ui.View):
             interaction.user.id
         )
 
-
-
         await self.refresh(interaction)
 
 
@@ -406,6 +440,7 @@ class RunView(discord.ui.View):
 # RUN MANAGEMENT
 # ---------------------------
 async def create_run(guild):
+
 
     channel = guild.get_channel(RUN_CHANNEL_ID)
 
@@ -424,34 +459,30 @@ async def create_run(guild):
     )
 
     set_run_state(
+        msg.id,
         guild.id,
         channel.id,
-        msg.id,
         1
     )
-
-    active_messages[guild.id] = msg
 
     print(f"Run created in {guild.name}")
 
 
 async def refresh_run_message(guild):
 
-    state = get_run_state(guild.id)
+    state = get_latest_run(guild.id)
 
     if not state:
         return
 
-    channel_id, message_id, is_open = state
+    message_id, channel_id, is_open = state
 
     try:
+
         channel = guild.get_channel(channel_id)
 
         if channel is None:
             channel = await guild.fetch_channel(channel_id)
-
-        if channel is None:
-            return
 
         msg = await channel.fetch_message(message_id)
 
@@ -465,7 +496,7 @@ async def refresh_run_message(guild):
     embed = build_embed(
         selected,
         waitlist,
-        is_open
+        True
     )
 
     try:
@@ -476,23 +507,22 @@ async def refresh_run_message(guild):
 
 async def close_run(guild):
 
-    state = get_run_state(guild.id)
+    state = get_latest_run(guild.id)
 
     if not state:
         return
 
-    channel_id, message_id, _ = state
-
-    channel = guild.get_channel(channel_id)
-
-    if channel is None:
-        channel = await guild.fetch_channel(channel_id)
-
-    if channel is None:
-        return
+    message_id, channel_id, _ = state
 
     try:
+
+        channel = guild.get_channel(channel_id)
+
+        if channel is None:
+            channel = await guild.fetch_channel(channel_id)
+
         message = await channel.fetch_message(message_id)
+
     except:
         return
 
@@ -513,7 +543,7 @@ async def close_run(guild):
         view=None
     )
 
-    set_open_state(guild.id, 0)
+    set_open_state(message_id, 0)
 
     print(f"Run closed in {guild.name}")
 
@@ -527,6 +557,7 @@ async def refresh_loop():
     for guild in bot.guilds:
         await refresh_run_message(guild)
 
+
 @tasks.loop(minutes=1)
 async def scheduler():
 
@@ -539,34 +570,44 @@ async def scheduler():
 
     for guild in bot.guilds:
 
+        latest_run = get_latest_run(guild.id)
+
+        # OPEN RUN
         if (
-                now.hour == RUN_OPEN_HOUR
-                and now.minute >= RUN_OPEN_MINUTE
-                and now.minute < RUN_OPEN_MINUTE + 2
-                and last_run_date != today
+            now.hour == RUN_OPEN_HOUR
+            and now.minute >= RUN_OPEN_MINUTE
+            and now.minute < RUN_OPEN_MINUTE + 2
+            and last_run_date != today
+            and not has_run_today(guild.id)
         ):
+
             last_run_date = today
 
             await create_run(guild)
 
         # CLOSE RUN
         if (
-                now.hour == RUN_CLOSE_HOUR
-                and now.minute >= RUN_CLOSE_MINUTE
-                and now.minute < RUN_CLOSE_MINUTE + 2
-                and last_close_date != today
+            now.hour == RUN_CLOSE_HOUR
+            and now.minute >= RUN_CLOSE_MINUTE
+            and now.minute < RUN_CLOSE_MINUTE + 2
+            and last_close_date != today
+            and latest_run
         ):
+
             last_close_date = today
 
             await close_run(guild)
+
 
 @scheduler.before_loop
 async def before_scheduler():
     await bot.wait_until_ready()
 
+
 @refresh_loop.before_loop
 async def before_refresh():
     await bot.wait_until_ready()
+
 
 # ---------------------------
 # COMMANDS
@@ -575,53 +616,75 @@ async def before_refresh():
 async def testrun(ctx):
 
     if not is_officer(ctx.author):
+
         await ctx.send(
             "❌ Officer role required."
         )
+
         return
 
     await create_run(ctx.guild)
 
-# ---------------------------
-# MemeCommands
-# ---------------------------
 
+# ---------------------------
+# MEME COMMANDS
+# ---------------------------
 @bot.command()
 async def deleteserver(ctx):
 
     if ctx.author.id != BOT_OWNER_ID:
+
         await ctx.send("Improper credentials idiot")
+
         return
+
     await ctx.send("Initiating server deletion protocol")
+
     await asyncio.sleep(5)
+
     await ctx.send("Server will be deleted in 3")
+
     await asyncio.sleep(1)
+
     await ctx.send("Server will be deleted in 2")
+
     await asyncio.sleep(1)
+
     await ctx.send("Server will be deleted in 1")
+
     await asyncio.sleep(5)
+
     await ctx.send("Wait that didn't work?")
+
 
 @bot.command()
 async def rallytroops(ctx):
 
     if ctx.author.id != BOT_OWNER_ID:
+
         await ctx.send("Improper credentials idiot")
+
         return
-    await ctx.send(f"Hey <@&{DOA_ROLE_ID}> we need a few more people on the form, I'd "
-                   f"appreciate it if you gave me some yummy tickies you know I like it "
-                   f"when my forms are nice and full mmm")
+
+    await ctx.send(
+        f"Hey <@&{DOA_ROLE_ID}> we need a few more people on the form, "
+        f"I'd appreciate it if you gave me some yummy tickies"
+    )
+
 
 @bot.command()
 async def whereis(ctx, member: discord.Member):
 
     if ctx.author.id != BOT_OWNER_ID:
+
         await ctx.send("Ping them yourself idiot")
+
         return
 
     await ctx.send(
         f"Hey {member.mention} why are you taking so long"
     )
+
 
 # ---------------------------
 # READY
@@ -643,4 +706,6 @@ async def on_ready():
 # ---------------------------
 # START BOT
 # ---------------------------
+
 bot.run(os.getenv("DISCORD_TOKEN"))
+#bot.run("token")
