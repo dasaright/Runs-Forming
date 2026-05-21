@@ -30,48 +30,6 @@ last_run_date = None
 last_close_date = None
 
 # ---------------------------
-# MemeCommands
-# ---------------------------
-
-@bot.command()
-async def deleteserver(ctx):
-
-    if ctx.author.id != BOT_OWNER_ID:
-        await ctx.send("Improper credentials idiot")
-        return
-    await ctx.send("Initiating server deletion protocol")
-    await asyncio.sleep(5)
-    await ctx.send("Server will be deleted in 3")
-    await asyncio.sleep(1)
-    await ctx.send("Server will be deleted in 2")
-    await asyncio.sleep(1)
-    await ctx.send("Server will be deleted in 1")
-    await asyncio.sleep(5)
-    await ctx.send("Wait that didn't work?")
-
-@bot.command()
-async def rallytroops(ctx):
-
-    if ctx.author.id != BOT_OWNER_ID:
-        await ctx.send("Improper credentials idiot")
-        return
-    await ctx.send(f"Hey <@&{DOA_ROLE_ID}> we need a few more people on the form, I'd "
-                   f"appreciate it if you gave me some yummy tickies you know I like it "
-                   f"when my forms are nice and full mmm")
-
-@bot.command()
-async def whereis(ctx, member: discord.Member):
-
-    if ctx.author.id != BOT_OWNER_ID:
-        await ctx.send("Ping them yourself idiot")
-        return
-
-    await ctx.send(
-        f"Hey {member.mention} why are you taking so long"
-    )
-
-
-# ---------------------------
 # HELPERS
 # ---------------------------
 def get_time_until_open():
@@ -619,6 +577,47 @@ async def testrun(ctx):
         return
 
     await create_run(ctx.guild)
+
+# ---------------------------
+# MemeCommands
+# ---------------------------
+
+@bot.command()
+async def deleteserver(ctx):
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+    await ctx.send("Initiating server deletion protocol")
+    await asyncio.sleep(5)
+    await ctx.send("Server will be deleted in 3")
+    await asyncio.sleep(1)
+    await ctx.send("Server will be deleted in 2")
+    await asyncio.sleep(1)
+    await ctx.send("Server will be deleted in 1")
+    await asyncio.sleep(5)
+    await ctx.send("Wait that didn't work?")
+
+@bot.command()
+async def rallytroops(ctx):
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+    await ctx.send(f"Hey <@&{DOA_ROLE_ID}> we need a few more people on the form, I'd "
+                   f"appreciate it if you gave me some yummy tickies you know I like it "
+                   f"when my forms are nice and full mmm")
+
+@bot.command()
+async def whereis(ctx, member: discord.Member):
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Ping them yourself idiot")
+        return
+
+    await ctx.send(
+        f"Hey {member.mention} why are you taking so long"
+    )
 
 # ---------------------------
 # READY
