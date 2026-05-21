@@ -2,6 +2,7 @@ import os
 import time
 import sqlite3
 import discord
+import asyncio
 from discord.ext import commands, tasks
 from datetime import datetime, time as dtime, timedelta
 import pytz
@@ -11,11 +12,14 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
+BOT_OWNER_ID = 218880619659132928
+DOA_ROLE_ID = 1199301817738211338
+
 RUN_CHANNEL_ID = 1169288946707087440 #low
 #RUN_CHANNEL_ID = 1505001264214315100 #mine
 
 RUN_OPEN_HOUR = 8
-RUN_OPEN_MINUTE = 30
+RUN_OPEN_MINUTE = 0
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
@@ -24,6 +28,48 @@ COOLDOWN_SECONDS = 1
 
 last_run_date = None
 last_close_date = None
+
+# ---------------------------
+# MemeCommands
+# ---------------------------
+
+@bot.command()
+async def deleteserver(ctx):
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+    await ctx.send("Initiating server deletion protocol")
+    await asyncio.sleep(5)
+    await ctx.send("Server will be deleted in 3")
+    await asyncio.sleep(1)
+    await ctx.send("Server will be deleted in 2")
+    await asyncio.sleep(1)
+    await ctx.send("Server will be deleted in 1")
+    await asyncio.sleep(5)
+    await ctx.send("Wait that didn't work?")
+
+@bot.command()
+async def rallytroops(ctx):
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+    await ctx.send(f"Hey <@&{DOA_ROLE_ID}> we need a few more people on the form, I'd "
+                   f"appreciate it if you gave me some yummy tickies you know I like it "
+                   f"when my forms are nice and full mmm")
+
+@bot.command()
+async def whereis(ctx, member: discord.Member):
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Ping them yourself idiot")
+        return
+
+    await ctx.send(
+        f"Hey {member.mention} why are you taking so long"
+    )
+
 
 # ---------------------------
 # HELPERS
