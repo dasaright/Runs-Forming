@@ -15,7 +15,7 @@ EST = pytz.timezone("US/Eastern")
 RUN_CHANNEL_ID = 1505001264214315100 #mine
 
 RUN_OPEN_HOUR = 8
-RUN_OPEN_MINUTE = 0
+RUN_OPEN_MINUTE = 15
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
@@ -531,11 +531,11 @@ async def scheduler():
 
     for guild in bot.guilds:
 
-        # OPEN RUN
         if (
-            now.hour == RUN_OPEN_HOUR
-            and now.minute == RUN_OPEN_MINUTE
-            and last_run_date != today
+                now.hour == RUN_OPEN_HOUR
+                and now.minute >= RUN_OPEN_MINUTE
+                and now.minute < RUN_OPEN_MINUTE + 2
+                and last_run_date != today
         ):
             last_run_date = today
 
@@ -543,9 +543,10 @@ async def scheduler():
 
         # CLOSE RUN
         if (
-            now.hour == RUN_CLOSE_HOUR
-            and now.minute == RUN_CLOSE_MINUTE
-            and last_close_date != today
+                now.hour == RUN_CLOSE_HOUR
+                and now.minute >= RUN_CLOSE_MINUTE
+                and now.minute < RUN_CLOSE_MINUTE + 2
+                and last_close_date != today
         ):
             last_close_date = today
 
