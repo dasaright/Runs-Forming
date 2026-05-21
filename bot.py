@@ -11,8 +11,8 @@ import pytz
 # ---------------------------
 EST = pytz.timezone("US/Eastern")
 
-RUN_CHANNEL_ID = 1169288946707087440 #low
-#RUN_CHANNEL_ID = 1505001264214315100 #mine
+#RUN_CHANNEL_ID = 1169288946707087440 #low
+RUN_CHANNEL_ID = 1505001264214315100 #mine
 
 RUN_OPEN_HOUR = 8
 RUN_OPEN_MINUTE = 0
@@ -244,7 +244,7 @@ def build_embed(selected, waitlist, is_open):
 
     run_timestamp = get_run_timestamp()
     timing = (
-        f"🟢 Runs begin <t:{run_timestamp}:t>\n"
+        f"Runs start <t:{run_timestamp}:t>\n"
         f"⏳ <t:{run_timestamp}:R>"
         if is_open else
         "🔴 CLOSED"
@@ -257,17 +257,21 @@ def build_embed(selected, waitlist, is_open):
     if now_ts >= run_timestamp:
         status = "🔴 CLOSED"
 
+    elif signup_count == 0:
+        status = f"🔴 no tickers spotted"
+
+
     elif signup_count >= 6:
         status = f"🟢 {signup_count} ticked"
 
     else:
         status = f"🟠 {signup_count} ticked"
 
-    embed.description = f"{timing}\n\n{status}"
+    embed.description = f"{timing}\n"
 
     roster = "\n".join(
-        f"{i + 1}. <@{u['user_id']}>"
-        for i, u in enumerate(selected)
+        f"<@{u['user_id']}>"
+        for u in selected
     ) or "None"
 
     wait = "\n".join(
@@ -276,7 +280,7 @@ def build_embed(selected, waitlist, is_open):
     ) or "None"
 
     embed.add_field(
-        name="✅ Ticked",
+        name=status,
         value=roster,
         inline=False
     )
@@ -344,14 +348,14 @@ class RunView(discord.ui.View):
             )
             return
 
+        await interaction.response.defer()
+
         add_signup(
             interaction.message.id,
             interaction.user.id,
             interaction.user.name,
             is_guild_member(interaction.user)
         )
-
-        await interaction.response.defer()
 
         await self.refresh(interaction)
 
@@ -378,12 +382,14 @@ class RunView(discord.ui.View):
             )
             return
 
+        await interaction.response.defer()
+
         remove_signup(
             interaction.message.id,
             interaction.user.id
         )
 
-        await interaction.response.defer()
+
 
         await self.refresh(interaction)
 
