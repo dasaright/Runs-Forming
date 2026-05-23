@@ -572,7 +572,7 @@ async def close_run(guild):
 # ---------------------------
 # TASK LOOPS
 # ---------------------------
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=1)
 async def refresh_loop():
 
     for guild in bot.guilds:
@@ -582,36 +582,30 @@ async def refresh_loop():
 @tasks.loop(minutes=1)
 async def scheduler():
 
-    global last_run_date
-    global last_close_date
-
     now = datetime.now(EST)
 
-    today = now.date()
+    current_minutes = now.hour * 60 + now.minute
+    open_minutes = RUN_OPEN_HOUR * 60 + RUN_OPEN_MINUTE
+    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
 
     for guild in bot.guilds:
 
         latest_run = get_latest_run(guild.id)
 
-        open_minutes = RUN_OPEN_HOUR * 60 + RUN_OPEN_MINUTE
-        current_minutes = now.hour * 60 + now.minute
-
+        # OPEN RUN
         if (
-                current_minutes >= open_minutes
-                and not has_run_today(guild.id)
+            current_minutes >= open_minutes
+            and not has_run_today(guild.id)
         ):
+
             await create_run(guild)
 
         # CLOSE RUN
         if (
-            now.hour == RUN_CLOSE_HOUR
-            and now.minute >= RUN_CLOSE_MINUTE
-            and now.minute < RUN_CLOSE_MINUTE + 2
-            and last_close_date != today
+            current_minutes >= close_minutes
             and latest_run
+            and latest_run[2] == 1
         ):
-
-            last_close_date = today
 
             await close_run(guild)
 
