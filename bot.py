@@ -57,14 +57,6 @@ def get_time_until_open():
 
     return hours, minutes
 
-def is_run_closed():
-
-    now = datetime.now(EST)
-
-    current_minutes = now.hour * 60 + now.minute
-    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
-
-    return current_minutes >= close_minutes
 
 def get_run_timestamp():
 
@@ -100,40 +92,31 @@ def has_run_today(guild_id):
 
     now = datetime.now(EST)
 
-    today_start = now.replace(
+    start_of_day = now.replace(
         hour=0,
         minute=0,
         second=0,
         microsecond=0
-    )
-
-    today_end = today_start + timedelta(days=1)
+    ).timestamp()
 
     cursor.execute("""
         SELECT message_id
         FROM run_state
         WHERE guild_id=?
-        ORDER BY message_id DESC
-        LIMIT 1
+        AND message_id IS NOT NULL
     """, (guild_id,))
 
-    row = cursor.fetchone()
+    rows = cursor.fetchall()
 
-    if not row:
-        return False
+    return len(rows) > 0
 
-    message_id = row[0]
+def is_guild_member(member):
+    return any(role.name == "Member" for role in member.roles)
 
-    discord_epoch = 1420070400000
 
-    timestamp_ms = ((message_id >> 22) + discord_epoch)
+def is_officer(member):
+    return any(role.name == "Officer" for role in member.roles)
 
-    message_time = datetime.fromtimestamp(
-        timestamp_ms / 1000,
-        tz=EST
-    )
-
-    return today_start <= message_time < today_end
 
 # ---------------------------
 # INTENTS
@@ -165,8 +148,7 @@ CREATE TABLE IF NOT EXISTS run_state (
     message_id INTEGER PRIMARY KEY,
     guild_id INTEGER,
     channel_id INTEGER,
-    is_open INTEGER,
-    created_at REAL
+    is_open INTEGER
 )
 """)
 
@@ -302,27 +284,43 @@ def build_embed(selected, waitlist, is_open):
 
     run_timestamp = get_run_timestamp()
 
-    timing = (
-        f"Runs start <t:{run_timestamp}:t>\n"
-        f"⏱️ <t:{run_timestamp}:R>"
-    )
+    now = datetime.now(EST)
 
-    signup_count = len(selected)
+    current_minutes = now.hour * 60 + now.minute
+    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
 
-    if not is_open:
+    is_closed = current_minutes >= close_minutes
 
-        status = "🔴 CLOSED"
+    if is_closed:
 
-    elif signup_count == 0:
-
-        status = "🔴 no ticks spotted"
-
-    elif signup_count >= 6:
-
-        status = f"🟢 {signup_count} ticked"
+        timing = "🔴 CLOSED"
 
     else:
 
+        timing = (
+            f"Runs start <t:{run_timestamp}:t>\n"
+            f"⏳ <t:{run_timestamp}:R>"
+        )
+
+    signup_count = len(selected)
+
+    now = datetime.now(EST)
+
+    current_minutes = now.hour * 60 + now.minute
+    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
+
+    is_closed = current_minutes >= close_minutes
+
+    if is_closed:
+        status = "🔴 CLOSED"
+
+    elif signup_count == 0:
+        status = "🔴 no tickers spotted"
+
+    elif signup_count >= 6:
+        status = f"🟢 {signup_count} ticked"
+
+    else:
         status = f"🟠 {signup_count} ticked"
 
     embed.description = timing
@@ -390,14 +388,6 @@ class RunView(discord.ui.View):
 
             return
 
-        if is_run_closed():
-            await interaction.response.send_message(
-                "Run is closed.",
-                ephemeral=True
-            )
-
-            return
-
         current = load_signups(interaction.message.id)
 
         if any(u["user_id"] == interaction.user.id for u in current):
@@ -431,14 +421,6 @@ class RunView(discord.ui.View):
 
             await interaction.response.send_message(
                 "⏳ Slow down — you’re clicking too fast.",
-                ephemeral=True
-            )
-
-            return
-
-        if is_run_closed():
-            await interaction.response.send_message(
-                "Run is closed.",
                 ephemeral=True
             )
 
@@ -507,9 +489,6 @@ async def refresh_run_message(guild):
     except:
         return
 
-    if not is_open:
-        return
-
     signups = load_signups(message_id)
 
     selected, waitlist = sort_and_split(signups)
@@ -572,7 +551,7 @@ async def close_run(guild):
 # ---------------------------
 # TASK LOOPS
 # ---------------------------
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=5)
 async def refresh_loop():
 
     for guild in bot.guilds:
@@ -582,11 +561,12 @@ async def refresh_loop():
 @tasks.loop(minutes=1)
 async def scheduler():
 
+    global last_run_date
+    global last_close_date
+
     now = datetime.now(EST)
 
-    current_minutes = now.hour * 60 + now.minute
-    open_minutes = RUN_OPEN_HOUR * 60 + RUN_OPEN_MINUTE
-    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
+    today = now.date()
 
     for guild in bot.guilds:
 
@@ -594,18 +574,27 @@ async def scheduler():
 
         # OPEN RUN
         if (
-            current_minutes >= open_minutes
+            now.hour == RUN_OPEN_HOUR
+            and now.minute >= RUN_OPEN_MINUTE
+            and now.minute < RUN_OPEN_MINUTE + 2
+            and last_run_date != today
             and not has_run_today(guild.id)
         ):
+
+            last_run_date = today
 
             await create_run(guild)
 
         # CLOSE RUN
         if (
-            current_minutes >= close_minutes
+            now.hour == RUN_CLOSE_HOUR
+            and now.minute >= RUN_CLOSE_MINUTE
+            and now.minute < RUN_CLOSE_MINUTE + 2
+            and last_close_date != today
             and latest_run
-            and latest_run[2] == 1
         ):
+
+            last_close_date = today
 
             await close_run(guild)
 
@@ -719,4 +708,4 @@ async def on_ready():
 # ---------------------------
 
 bot.run(os.getenv("DISCORD_TOKEN"))
-#bot.run("code")
+#bot.run("token")
