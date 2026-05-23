@@ -57,6 +57,14 @@ def get_time_until_open():
 
     return hours, minutes
 
+def is_run_closed():
+
+    now = datetime.now(EST)
+
+    current_minutes = now.hour * 60 + now.minute
+    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
+
+    return current_minutes >= close_minutes
 
 def get_run_timestamp():
 
@@ -103,20 +111,14 @@ def has_run_today(guild_id):
         SELECT message_id
         FROM run_state
         WHERE guild_id=?
-        AND message_id IS NOT NULL
-    """, (guild_id,))
+        AND created_at >= ?
+        LIMIT 1
+    """, (
+        guild_id,
+        start_of_day
+    ))
 
-    rows = cursor.fetchall()
-
-    return len(rows) > 0
-
-def is_guild_member(member):
-    return any(role.name == "Member" for role in member.roles)
-
-
-def is_officer(member):
-    return any(role.name == "Officer" for role in member.roles)
-
+    return cursor.fetchone() is not None
 
 # ---------------------------
 # INTENTS
@@ -148,7 +150,8 @@ CREATE TABLE IF NOT EXISTS run_state (
     message_id INTEGER PRIMARY KEY,
     guild_id INTEGER,
     channel_id INTEGER,
-    is_open INTEGER
+    is_open INTEGER,
+    created_at REAL
 )
 """)
 
@@ -284,43 +287,27 @@ def build_embed(selected, waitlist, is_open):
 
     run_timestamp = get_run_timestamp()
 
-    now = datetime.now(EST)
-
-    current_minutes = now.hour * 60 + now.minute
-    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
-
-    is_closed = current_minutes >= close_minutes
-
-    if is_closed:
-
-        timing = "🔴 CLOSED"
-
-    else:
-
-        timing = (
-            f"Runs start <t:{run_timestamp}:t>\n"
-            f"⏳ <t:{run_timestamp}:R>"
-        )
+    timing = (
+        f"Runs start <t:{run_timestamp}:t>\n"
+        f"⏱️ <t:{run_timestamp}:R>"
+    )
 
     signup_count = len(selected)
 
-    now = datetime.now(EST)
+    if not is_open:
 
-    current_minutes = now.hour * 60 + now.minute
-    close_minutes = RUN_CLOSE_HOUR * 60 + RUN_CLOSE_MINUTE
-
-    is_closed = current_minutes >= close_minutes
-
-    if is_closed:
         status = "🔴 CLOSED"
 
     elif signup_count == 0:
-        status = "🔴 no tickers spotted"
+
+        status = "🔴 no ticks spotted"
 
     elif signup_count >= 6:
+
         status = f"🟢 {signup_count} ticked"
 
     else:
+
         status = f"🟠 {signup_count} ticked"
 
     embed.description = timing
@@ -388,6 +375,14 @@ class RunView(discord.ui.View):
 
             return
 
+        if is_run_closed():
+            await interaction.response.send_message(
+                "Run is closed.",
+                ephemeral=True
+            )
+
+            return
+
         current = load_signups(interaction.message.id)
 
         if any(u["user_id"] == interaction.user.id for u in current):
@@ -421,6 +416,14 @@ class RunView(discord.ui.View):
 
             await interaction.response.send_message(
                 "⏳ Slow down — you’re clicking too fast.",
+                ephemeral=True
+            )
+
+            return
+
+        if is_run_closed():
+            await interaction.response.send_message(
+                "Run is closed.",
                 ephemeral=True
             )
 
@@ -487,6 +490,9 @@ async def refresh_run_message(guild):
         msg = await channel.fetch_message(message_id)
 
     except:
+        return
+
+    if not is_open:
         return
 
     signups = load_signups(message_id)
@@ -572,15 +578,14 @@ async def scheduler():
 
         latest_run = get_latest_run(guild.id)
 
+        open_minutes = RUN_OPEN_HOUR * 60 + RUN_OPEN_MINUTE
+        current_minutes = now.hour * 60 + now.minute
+
         # OPEN RUN
         if (
-            now.hour == RUN_OPEN_HOUR
-            and now.minute >= RUN_OPEN_MINUTE
-            and now.minute < RUN_OPEN_MINUTE + 2
-            and last_run_date != today
-            and not has_run_today(guild.id)
+                current_minutes >= open_minutes
+                and not has_run_today(guild.id)
         ):
-
             last_run_date = today
 
             await create_run(guild)
@@ -708,4 +713,4 @@ async def on_ready():
 # ---------------------------
 
 bot.run(os.getenv("DISCORD_TOKEN"))
-#bot.run("token")
+#bot.run("code")
