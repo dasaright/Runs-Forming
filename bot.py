@@ -100,25 +100,40 @@ def has_run_today(guild_id):
 
     now = datetime.now(EST)
 
-    start_of_day = now.replace(
+    today_start = now.replace(
         hour=0,
         minute=0,
         second=0,
         microsecond=0
-    ).timestamp()
+    )
+
+    today_end = today_start + timedelta(days=1)
 
     cursor.execute("""
         SELECT message_id
         FROM run_state
         WHERE guild_id=?
-        AND created_at >= ?
+        ORDER BY message_id DESC
         LIMIT 1
-    """, (
-        guild_id,
-        start_of_day
-    ))
+    """, (guild_id,))
 
-    return cursor.fetchone() is not None
+    row = cursor.fetchone()
+
+    if not row:
+        return False
+
+    message_id = row[0]
+
+    discord_epoch = 1420070400000
+
+    timestamp_ms = ((message_id >> 22) + discord_epoch)
+
+    message_time = datetime.fromtimestamp(
+        timestamp_ms / 1000,
+        tz=EST
+    )
+
+    return today_start <= message_time < today_end
 
 # ---------------------------
 # INTENTS
@@ -581,13 +596,10 @@ async def scheduler():
         open_minutes = RUN_OPEN_HOUR * 60 + RUN_OPEN_MINUTE
         current_minutes = now.hour * 60 + now.minute
 
-        # OPEN RUN
         if (
                 current_minutes >= open_minutes
                 and not has_run_today(guild.id)
         ):
-            last_run_date = today
-
             await create_run(guild)
 
         # CLOSE RUN
