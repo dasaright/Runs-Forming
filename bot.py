@@ -88,28 +88,6 @@ def check_cooldown(user_id):
 
     return True
 
-def has_run_today(guild_id):
-
-    now = datetime.now(EST)
-
-    start_of_day = now.replace(
-        hour=0,
-        minute=0,
-        second=0,
-        microsecond=0
-    ).timestamp()
-
-    cursor.execute("""
-        SELECT message_id
-        FROM run_state
-        WHERE guild_id=?
-        AND message_id IS NOT NULL
-    """, (guild_id,))
-
-    rows = cursor.fetchall()
-
-    return len(rows) > 0
-
 def is_guild_member(member):
     return any(role.name == "Member" for role in member.roles)
 
@@ -312,7 +290,7 @@ def build_embed(selected, waitlist, is_open):
     is_closed = current_minutes >= close_minutes
 
     if is_closed:
-        status = "🔴 CLOSED"
+        status = "<:SearchingPepe:1318542083962830848>"
 
     elif signup_count == 0:
         status = "🔴 no tickers spotted"
@@ -342,7 +320,7 @@ def build_embed(selected, waitlist, is_open):
     )
 
     embed.add_field(
-        name="⏳ Waitlist",
+        name="<:fradge:1238196826784530452> Waitlist",
         value=wait,
         inline=False
     )
@@ -453,6 +431,11 @@ async def create_run(guild):
 
     embed = build_embed([], [], True)
 
+    cursor.execute(
+        "DELETE FROM run_state WHERE guild_id=?",
+        (guild.id,)
+    )
+    conn.commit()
     msg = await channel.send(
         embed=embed,
         view=RunView()
@@ -476,6 +459,8 @@ async def refresh_run_message(guild):
         return
 
     message_id, channel_id, is_open = state
+    if not is_open:
+        return
 
     try:
 
@@ -496,7 +481,7 @@ async def refresh_run_message(guild):
     embed = build_embed(
         selected,
         waitlist,
-        True
+        bool(is_open)
     )
 
     try:
@@ -559,6 +544,21 @@ async def refresh_loop():
 
 
 @tasks.loop(minutes=1)
+
+async def start_run(guild):
+
+    latest = get_latest_run(guild.id)
+
+    if latest:
+        _, _, is_open = latest
+
+        if is_open:
+            return False
+
+    await create_run(guild)
+    return True
+
+@tasks.loop(minutes=1)
 async def scheduler():
 
     global last_run_date
@@ -574,16 +574,13 @@ async def scheduler():
 
         # OPEN RUN
         if (
-            now.hour == RUN_OPEN_HOUR
-            and now.minute >= RUN_OPEN_MINUTE
-            and now.minute < RUN_OPEN_MINUTE + 2
-            and last_run_date != today
-            and not has_run_today(guild.id)
+                now.hour == RUN_OPEN_HOUR
+                and now.minute >= RUN_OPEN_MINUTE
+                and now.minute < RUN_OPEN_MINUTE + 2
+                and last_run_date != today
         ):
-
             last_run_date = today
-
-            await create_run(guild)
+            await start_run(guild)
 
         # CLOSE RUN
         if (
@@ -597,7 +594,6 @@ async def scheduler():
             last_close_date = today
 
             await close_run(guild)
-
 
 @scheduler.before_loop
 async def before_scheduler():
@@ -622,8 +618,10 @@ async def testrun(ctx):
         )
 
         return
+    created = await start_run(ctx.guild)
 
-    await create_run(ctx.guild)
+    if not created:
+        await ctx.send("A run is already open.")
 
 
 # ---------------------------
