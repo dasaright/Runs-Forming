@@ -14,6 +14,8 @@ EST = pytz.timezone("US/Eastern")
 
 BOT_OWNER_ID = 218880619659132928
 DOA_ROLE_ID = 1199301817738211338
+HUMP_ID = 453042968669192204
+JOKER_ID = 276430971123924994
 
 RUN_CHANNEL_ID = 1169288946707087440 #low
 #RUN_CHANNEL_ID = 1505001264214315100 #mine
@@ -291,6 +293,7 @@ def build_embed(selected, waitlist, is_open):
 
     # Check if Taco is signed up
     taco_joined = any(u["user_id"] == BOT_OWNER_ID for u in selected)
+    hump_joined = any(u["user_id"] == HUMP_ID for u in selected)
 
     if is_closed:
         status = "<:SearchingPepe:1318542083962830848>"
@@ -304,9 +307,15 @@ def build_embed(selected, waitlist, is_open):
     else:
         status = f"🟠 {signup_count} ticked"
 
-    # Add Taco message underneath the normal status
-    if taco_joined:
-        status += f"\n*hey guys <@{TACO_USER_ID}> is ticked, runs definitely will form today*"
+    # Add a secondary message
+    if joker_joined:
+        status += "\n*I bet joker ticked just to see if he had a special message*"
+
+    elif taco_joined and hump_joined:
+        status += "\n*we got Hump and Taco, guys come on please*"
+
+    elif taco_joined:
+        status += f"\n*hey guys <@{BOT_OWNER_ID}> is ticked, runs definitely will form today*"
 
     embed.description = timing
 
