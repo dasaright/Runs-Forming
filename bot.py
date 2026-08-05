@@ -20,8 +20,8 @@ JOKER_ID = 276430971123924994
 RUN_CHANNEL_ID = 1169288946707087440 #low
 #RUN_CHANNEL_ID = 1505001264214315100 #mine
 
-RUN_OPEN_HOUR = 8
-RUN_OPEN_MINUTE = 0
+RUN_OPEN_HOUR = 9
+RUN_OPEN_MINUTE = 5
 
 RUN_CLOSE_HOUR = 14
 RUN_CLOSE_MINUTE = 30
@@ -571,12 +571,6 @@ async def start_run(guild):
 
     latest = get_latest_run(guild.id)
 
-    if latest:
-        _, _, is_open = latest
-
-        if is_open:
-            return False
-
     await create_run(guild)
     return True
 
@@ -585,6 +579,8 @@ async def scheduler():
 
     global run_posted_today
     global last_close_date
+
+    print(f"[Scheduler] {datetime.now(EASTERN)}")
 
     now = datetime.now(EST)
 
@@ -604,8 +600,7 @@ async def scheduler():
         # OPEN RUN
         if (
                 now.hour == RUN_OPEN_HOUR
-                and now.minute >= RUN_OPEN_MINUTE
-                and now.minute < RUN_OPEN_MINUTE + 2
+                and RUN_OPEN_MINUTE <= now.minute < RUN_OPEN_MINUTE + 2
                 and not run_posted_today
         ):
             created = await start_run(guild)
