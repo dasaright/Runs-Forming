@@ -15,9 +15,6 @@ EST = pytz.timezone("US/Eastern")
 BOT_OWNER_ID = 218880619659132928
 DOA_ROLE_ID = 1199301817738211338
 
-GUILD_ID = 1159893108528517240 #low
-#GUILD_ID = 633817926088130561 #mine
-
 RUN_CHANNEL_ID = 1169288946707087440 #low
 #RUN_CHANNEL_ID = 1505001264214315100 #mine
 
@@ -29,6 +26,7 @@ RUN_CLOSE_MINUTE = 30
 
 COOLDOWN_SECONDS = 1
 
+run_posted_today = False
 last_close_date = None
 
 user_cooldowns = {}
@@ -291,17 +289,24 @@ def build_embed(selected, waitlist, is_open):
 
     is_closed = current_minutes >= close_minutes
 
+    # Check if Taco is signed up
+    taco_joined = any(u["user_id"] == BOT_OWNER_ID for u in selected)
+
     if is_closed:
         status = "<:SearchingPepe:1318542083962830848>"
 
     elif signup_count == 0:
-        status = "🔴 no tickers spotted"
+        status = "🔴 please tick I am lonely"
 
     elif signup_count >= 6:
         status = f"🟢 {signup_count} ticked"
 
     else:
         status = f"🟠 {signup_count} ticked"
+
+    # Add Taco message underneath the normal status
+    if taco_joined:
+        status += f"\n*hey guys <@{TACO_USER_ID}> is ticked, runs definitely will form today*"
 
     embed.description = timing
 
@@ -421,6 +426,11 @@ class RunView(discord.ui.View):
 # ---------------------------
 async def create_run(guild):
 
+    latest = get_latest_run(guild.id)
+    if latest:
+        _, _, is_open = latest
+        if is_open:
+            return False
 
     channel = guild.get_channel(RUN_CHANNEL_ID)
 
@@ -451,6 +461,7 @@ async def create_run(guild):
     )
 
     print(f"Run created in {guild.name}")
+    return True
 
 
 async def refresh_run_message(guild):
@@ -547,23 +558,15 @@ async def refresh_loop():
 
 @tasks.loop(minutes=1)
 
-async def start_run(guild, force=False):
+async def start_run(guild):
 
-    if force:
-        cursor.execute(
-            "DELETE FROM run_state WHERE guild_id=?",
-            (guild.id,)
-        )
-        conn.commit()
+    latest = get_latest_run(guild.id)
 
-    else:
-        latest = get_latest_run(guild.id)
+    if latest:
+        _, _, is_open = latest
 
-        if latest:
-            _, _, is_open = latest
-
-            if is_open:
-                return False
+        if is_open:
+            return False
 
     await create_run(guild)
     return True
@@ -571,50 +574,48 @@ async def start_run(guild, force=False):
 @tasks.loop(minutes=1)
 async def scheduler():
 
+    global run_posted_today
     global last_close_date
 
     now = datetime.now(EST)
+
     today = now.date()
 
-    guild = bot.get_guild(GUILD_ID)
-
-    if guild is None:
-        print("Configured guild not found.")
-        return
-
-    latest_run = get_latest_run(guild.id)
-
-    # -----------------------
-    # OPEN RUN
-    # -----------------------
+    # Reset one hour before the run opens
     if (
-            now.hour == RUN_OPEN_HOUR
-            and RUN_OPEN_MINUTE <= now.minute < RUN_OPEN_MINUTE + 2
+            now.hour == (RUN_OPEN_HOUR - 1) % 24
+            and now.minute == RUN_OPEN_MINUTE
     ):
-        # Forget the previous run, regardless of whether it was open or closed.
-        cursor.execute(
-            "DELETE FROM run_state WHERE guild_id=?",
-            (guild.id,)
-        )
-        conn.commit()
+        run_posted_today = False
 
-        await start_run(guild, force=True)
+    for guild in bot.guilds:
 
-        print(f"Opened run in {guild.name}")
+        latest_run = get_latest_run(guild.id)
 
-    # -----------------------
-    # CLOSE RUN
-    # -----------------------
-    if (
-        now.hour == RUN_CLOSE_HOUR
-        and RUN_CLOSE_MINUTE <= now.minute < RUN_CLOSE_MINUTE + 2
-        and last_close_date != today
-        and latest_run
-    ):
+        # OPEN RUN
+        if (
+                now.hour == RUN_OPEN_HOUR
+                and now.minute >= RUN_OPEN_MINUTE
+                and now.minute < RUN_OPEN_MINUTE + 2
+                and not run_posted_today
+        ):
+            created = await start_run(guild)
 
-        last_close_date = today
+            if created:
+                run_posted_today = True
 
-        await close_run(guild)
+        # CLOSE RUN
+        if (
+            now.hour == RUN_CLOSE_HOUR
+            and now.minute >= RUN_CLOSE_MINUTE
+            and now.minute < RUN_CLOSE_MINUTE + 2
+            and last_close_date != today
+            and latest_run
+        ):
+
+            last_close_date = today
+
+            await close_run(guild)
 
 @scheduler.before_loop
 async def before_scheduler():
@@ -639,7 +640,7 @@ async def testrun(ctx):
         )
 
         return
-    await start_run(ctx.guild, force=True)
+    created = await start_run(ctx.guild)
 
     if not created:
         await ctx.send("A run is already open.")
@@ -726,5 +727,5 @@ async def on_ready():
 # START BOT
 # ---------------------------
 
-bot.run(os.getenv("DISCORD_TOKEN"))
-#bot.run(" ")
+#bot.run(os.getenv("DISCORD_TOKEN"))
+#
