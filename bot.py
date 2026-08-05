@@ -644,6 +644,8 @@ async def testrun(ctx):
         )
 
         return
+    global run_posted_today
+    run_posted_today = False
     created = await start_run(ctx.guild)
 
     if not created:
@@ -680,6 +682,15 @@ async def deleteserver(ctx):
 
     await ctx.send("Wait that didn't work?")
 
+
+@bot.command()
+@commands.has_role("Officer")  # or whatever role you use for admin commands
+async def reset(ctx):
+    global run_posted_today
+
+    run_posted_today = False
+
+    await ctx.send("✅ `run_posted_today` has been reset to `False`.")
 
 @bot.command()
 async def rallytroops(ctx):
