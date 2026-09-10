@@ -14,6 +14,7 @@ EST = pytz.timezone("US/Eastern")
 
 BOT_OWNER_ID = 218880619659132928
 DOA_ROLE_ID = 1199301817738211338
+JOKER_ID = 276430971123924994
 
 GUILD_ID = 1159893108528517240 #low
 #GUILD_ID = 633817926088130561 #mine
@@ -30,6 +31,12 @@ RUN_CLOSE_MINUTE = 30
 COOLDOWN_SECONDS = 1
 
 last_close_date = None
+
+# Prevents the scheduler from creating the daily run more than once
+checkhasposted = 0
+
+# Prevents the 15-minute reminder from being sent more than once
+checkhaspinged = 0
 
 user_cooldowns = {}
 
@@ -546,8 +553,14 @@ async def refresh_loop():
 
 
 @tasks.loop(minutes=1)
-
 async def start_run(guild, force=False):
+
+    global checkhasposted
+    global checkhaspinged
+
+    # If today's run has already been posted, do nothing
+    if checkhasposted == 1 and not force:
+        return False
 
     if force:
         cursor.execute(
@@ -565,13 +578,19 @@ async def start_run(guild, force=False):
             if is_open:
                 return False
 
+    # Create the run
     await create_run(guild)
+
+    # Mark today's run as posted
+    checkhasposted = 1
+
     return True
 
 @tasks.loop(minutes=1)
 async def scheduler():
 
     global last_close_date
+    global checkhasposted
 
     now = datetime.now(EST)
     today = now.date()
@@ -582,29 +601,87 @@ async def scheduler():
         print("Configured guild not found.")
         return
 
-    latest_run = get_latest_run(guild.id)
+    # -----------------------
+    # RESET DAILY POST CHECK
+    # -----------------------
+    # Reset checkhasposted one hour before the run opens
+    reset_hour = (RUN_OPEN_HOUR - 1) % 24
+
+    if (
+        now.hour == reset_hour
+        and now.minute == RUN_OPEN_MINUTE
+    ):
+        checkhasposted = 0
+        checkhaspinged = 0
+        print("Daily run post check reset.")
+
+
+    # -----------------------
+    # 15 MINUTE RUN REMINDER
+    # -----------------------
+    if (
+        now.hour == RUN_OPEN_HOUR
+        and now.minute == RUN_OPEN_MINUTE - 15
+        and checkhaspinged == 0
+    ):
+        latest_run = get_latest_run(guild.id)
+
+        if latest_run:
+            message_id, _, is_open = latest_run
+
+            signups = load_signups(message_id)
+
+            selected, waitlist = sort_and_split(signups)
+
+            # Only ping if 6 or more people are in the actual run
+            if len(selected) >= 6:
+
+                mentions = " ".join(
+                    f"<@{u['user_id']}>"
+                    for u in selected
+                )
+
+                channel = guild.get_channel(RUN_CHANNEL_ID)
+
+                if channel is None:
+                    channel = await guild.fetch_channel(RUN_CHANNEL_ID)
+
+                await channel.send(
+                    f"⏰ reminder runs in 15 minutes {mentions}"
+                )
+
+                checkhaspinged = 1
+
+                print(f"15-minute reminder sent in {guild.name}")
+
+            else:
+                print(
+                    f"15-minute reminder skipped - only "
+                    f"{len(selected)} people signed up."
+                )
+
+
 
     # -----------------------
     # OPEN RUN
     # -----------------------
     if (
-            now.hour == RUN_OPEN_HOUR
-            and RUN_OPEN_MINUTE <= now.minute < RUN_OPEN_MINUTE + 2
+        now.hour == RUN_OPEN_HOUR
+        and now.minute == RUN_OPEN_MINUTE
+        and checkhasposted == 0
     ):
-        # Forget the previous run, regardless of whether it was open or closed.
-        cursor.execute(
-            "DELETE FROM run_state WHERE guild_id=?",
-            (guild.id,)
-        )
-        conn.commit()
+        created = await start_run(guild)
 
-        await start_run(guild, force=True)
-
-        print(f"Opened run in {guild.name}")
+        if created:
+            print(f"Opened run in {guild.name}")
+        else:
+            print("Run was not created.")
 
     # -----------------------
     # CLOSE RUN
     # -----------------------
+    latest_run = get_latest_run(guild.id)
+
     if (
         now.hour == RUN_CLOSE_HOUR
         and RUN_CLOSE_MINUTE <= now.minute < RUN_CLOSE_MINUTE + 2
@@ -639,7 +716,8 @@ async def testrun(ctx):
         )
 
         return
-    await start_run(ctx.guild, force=True)
+
+    created = await start_run(ctx.guild, force=True)
 
     if not created:
         await ctx.send("A run is already open.")
@@ -702,6 +780,16 @@ async def whereis(ctx, member: discord.Member):
 
     await ctx.send(
         f"Hey {member.mention} why are you taking so long"
+    )
+
+@bot.command()
+async def remindjoker(ctx):
+
+    await ctx.send(
+        f"<@{JOKER_ID}> hey you're still ticked and also I think it's about time I get "
+        f"a raise for all my hard work and contributions you can help me out by going to "
+        f"your nearest grocery store and buying some apple itunes gift cards and messaging "
+        f"me the codes do not redeem the cards"
     )
 
 
