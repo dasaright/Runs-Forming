@@ -625,7 +625,7 @@ async def scheduler():
             minute=RUN_CLOSE_MINUTE,
             second=0,
             microsecond=0
-        ) - timedelta(minutes=5)
+        ) - timedelta(minutes=15)
     )
 
     if (
