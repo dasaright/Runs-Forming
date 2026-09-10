@@ -619,21 +619,30 @@ async def scheduler():
     # -----------------------
     # 15 MINUTE RUN REMINDER
     # -----------------------
+    reminder_time = (
+        datetime.now(EST).replace(
+            hour=RUN_CLOSE_HOUR,
+            minute=RUN_CLOSE_MINUTE,
+            second=0,
+            microsecond=0
+        ) - timedelta(minutes=5)
+    )
+
     if (
-        now.hour == RUN_OPEN_HOUR
-        and now.minute == RUN_OPEN_MINUTE - 15
+        now.hour == reminder_time.hour
+        and now.minute == reminder_time.minute
         and checkhaspinged == 0
     ):
         latest_run = get_latest_run(guild.id)
 
         if latest_run:
-            message_id, _, is_open = latest_run
+            message_id, channel_id, is_open = latest_run
 
             signups = load_signups(message_id)
 
             selected, waitlist = sort_and_split(signups)
 
-            # Only ping if 6 or more people are in the actual run
+            # Only remind if 6 or more are actually in the run
             if len(selected) >= 6:
 
                 mentions = " ".join(
@@ -641,13 +650,13 @@ async def scheduler():
                     for u in selected
                 )
 
-                channel = guild.get_channel(RUN_CHANNEL_ID)
+                channel = guild.get_channel(channel_id)
 
                 if channel is None:
-                    channel = await guild.fetch_channel(RUN_CHANNEL_ID)
+                    channel = await guild.fetch_channel(channel_id)
 
                 await channel.send(
-                    f"⏰ reminder runs in 15 minutes {mentions}"
+                    f"⏰ Run starts in 15 minutes! {mentions}"
                 )
 
                 checkhaspinged = 1
@@ -656,11 +665,9 @@ async def scheduler():
 
             else:
                 print(
-                    f"15-minute reminder skipped - only "
-                    f"{len(selected)} people signed up."
+                    f"15-minute reminder skipped - "
+                    f"only {len(selected)} people signed up."
                 )
-
-
 
     # -----------------------
     # OPEN RUN
