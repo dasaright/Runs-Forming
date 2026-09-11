@@ -591,6 +591,7 @@ async def scheduler():
 
     global last_close_date
     global checkhasposted
+    global checkhaspinged
 
     now = datetime.now(EST)
     today = now.date()
@@ -619,14 +620,12 @@ async def scheduler():
     # -----------------------
     # 15 MINUTE RUN REMINDER
     # -----------------------
-    reminder_time = (
-        datetime.now(EST).replace(
-            hour=RUN_CLOSE_HOUR,
-            minute=RUN_CLOSE_MINUTE,
-            second=0,
-            microsecond=0
-        ) - timedelta(minutes=15)
-    )
+    reminder_time = datetime.now(EST).replace(
+        hour=RUN_CLOSE_HOUR,
+        minute=RUN_CLOSE_MINUTE,
+        second=0,
+        microsecond=0
+    ) - timedelta(minutes=5)
 
     if (
         now.hour == reminder_time.hour
@@ -638,36 +637,40 @@ async def scheduler():
         if latest_run:
             message_id, channel_id, is_open = latest_run
 
-            signups = load_signups(message_id)
+            # Only remind for an open run
+            if is_open:
+                signups = load_signups(message_id)
 
-            selected, waitlist = sort_and_split(signups)
+                selected, waitlist = sort_and_split(signups)
 
-            # Only remind if 6 or more are actually in the run
-            if len(selected) >= 6:
+                # Only remind if 6 or more are actually in the run
+                if len(selected) >= 6:
 
-                mentions = " ".join(
-                    f"<@{u['user_id']}>"
-                    for u in selected
-                )
+                    mentions = " ".join(
+                        f"<@{u['user_id']}>"
+                        for u in selected
+                    )
 
-                channel = guild.get_channel(channel_id)
+                    channel = guild.get_channel(channel_id)
 
-                if channel is None:
-                    channel = await guild.fetch_channel(channel_id)
+                    if channel is None:
+                        channel = await guild.fetch_channel(channel_id)
 
-                await channel.send(
-                    f"⏰ Run starts in 15 minutes! {mentions}"
-                )
+                    await channel.send(
+                        f"⏰ Run starts in 15 minutes! {mentions}"
+                    )
 
-                checkhaspinged = 1
+                    checkhaspinged = 1
 
-                print(f"15-minute reminder sent in {guild.name}")
+                    print(
+                        f"15-minute reminder sent in {guild.name}"
+                    )
 
-            else:
-                print(
-                    f"15-minute reminder skipped - "
-                    f"only {len(selected)} people signed up."
-                )
+                else:
+                    print(
+                        f"15-minute reminder skipped - "
+                        f"only {len(selected)} people signed up."
+                    )
 
     # -----------------------
     # OPEN RUN
@@ -729,6 +732,88 @@ async def testrun(ctx):
     if not created:
         await ctx.send("A run is already open.")
 
+@bot.command()
+async def add(ctx, member: discord.Member):
+
+    # Only the bot owner can use this command
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+
+    # Get the latest run
+    latest_run = get_latest_run(ctx.guild.id)
+
+    if not latest_run:
+        await ctx.send("There is no run form.")
+        return
+
+    message_id, channel_id, is_open = latest_run
+
+    # Don't allow adding people to a closed run
+    if not is_open:
+        await ctx.send("The current run is closed.")
+        return
+
+    # Check if the user is already on the form
+    current = load_signups(message_id)
+
+    if any(u["user_id"] == member.id for u in current):
+        await ctx.send(f"{member.mention} is already ticked.")
+        return
+
+    # Add them using the same system as the Join Run button
+    add_signup(
+        message_id,
+        member.id,
+        member.name,
+        is_guild_member(member)
+    )
+
+    # Refresh the form
+    await refresh_run_message(ctx.guild)
+
+    await ctx.send(f"Added {member.mention} to the run.")
+
+
+@bot.command()
+async def remove(ctx, member: discord.Member):
+
+    # Only the bot owner can use this command
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+
+    # Get the latest run
+    latest_run = get_latest_run(ctx.guild.id)
+
+    if not latest_run:
+        await ctx.send("There is no run form.")
+        return
+
+    message_id, channel_id, is_open = latest_run
+
+    # Don't allow removing people from a closed run
+    if not is_open:
+        await ctx.send("The current run is closed.")
+        return
+
+    # Check if the user is actually on the form
+    current = load_signups(message_id)
+
+    if not any(u["user_id"] == member.id for u in current):
+        await ctx.send(f"{member.mention} isn't currently ticked.")
+        return
+
+    # Remove them
+    remove_signup(
+        message_id,
+        member.id
+    )
+
+    # Refresh the form
+    await refresh_run_message(ctx.guild)
+
+    await ctx.send(f"Removed {member.mention} from the run.")
 
 # ---------------------------
 # MEME COMMANDS
