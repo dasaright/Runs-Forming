@@ -445,6 +445,7 @@ async def create_run(guild):
         (guild.id,)
     )
     conn.commit()
+
     msg = await channel.send(
         embed=embed,
         view=RunView()
@@ -552,7 +553,6 @@ async def refresh_loop():
         await refresh_run_message(guild)
 
 
-@tasks.loop(minutes=1)
 @tasks.loop(minutes=1)
 async def start_run(guild, force=False):
 
@@ -909,6 +909,65 @@ async def remindjoker(ctx):
     )
 
 
+async def restore_current_run():
+    global checkhasposted
+    guild = bot.get_guild(GUILD_ID)
+
+    if guild is None:
+        print("Configured guild not found.")
+        return
+
+    state = get_latest_run(guild.id)
+
+    if not state:
+        print("No current run to restore.")
+        return
+
+    message_id, channel_id, is_open = state
+
+    if is_open:
+        checkhasposted = 1
+
+    if not is_open:
+        print("Current run is closed. Nothing to restore.")
+        return
+
+    try:
+        channel = guild.get_channel(channel_id)
+
+        if channel is None:
+            channel = await guild.fetch_channel(channel_id)
+
+        message = await channel.fetch_message(message_id)
+
+        # Reattach the persistent buttons
+        await message.edit(view=RunView())
+
+        # Reload signups from SQLite and refresh the embed
+        signups = load_signups(message_id)
+
+        selected, waitlist = sort_and_split(signups)
+
+        embed = build_embed(
+            selected,
+            waitlist,
+            True
+        )
+
+        await message.edit(
+            embed=embed,
+            view=RunView()
+        )
+
+        print(
+            f"Restored current run in {guild.name} "
+            f"with {len(signups)} signups."
+        )
+
+    except Exception as e:
+        print(f"Could not restore current run: {e}")
+
+
 # ---------------------------
 # READY
 # ---------------------------
@@ -918,6 +977,8 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
     bot.add_view(RunView())
+
+    await restore_current_run()
 
     if not refresh_loop.is_running():
         refresh_loop.start()
