@@ -22,7 +22,7 @@ GUILD_ID = 1159893108528517240 #low
 RUN_CHANNEL_ID = 1169288946707087440 #low
 #RUN_CHANNEL_ID = 1505001264214315100 #mine
 
-RUN_OPEN_HOUR = 8
+RUN_OPEN_HOUR = 6
 RUN_OPEN_MINUTE = 0
 
 RUN_CLOSE_HOUR = 14
@@ -302,7 +302,7 @@ def build_embed(selected, waitlist, is_open):
         status = "<:SearchingPepe:1318542083962830848>"
 
     elif signup_count == 0:
-        status = "🔴 no tickers spotted"
+        status = "🔴 nobody ticked, I feel so lonely"
 
     elif signup_count >= 6:
         status = f"🟢 {signup_count} ticked"
@@ -553,30 +553,14 @@ async def refresh_loop():
 
 
 @tasks.loop(minutes=1)
+@tasks.loop(minutes=1)
 async def start_run(guild, force=False):
 
     global checkhasposted
-    global checkhaspinged
 
     # If today's run has already been posted, do nothing
     if checkhasposted == 1 and not force:
         return False
-
-    if force:
-        cursor.execute(
-            "DELETE FROM run_state WHERE guild_id=?",
-            (guild.id,)
-        )
-        conn.commit()
-
-    else:
-        latest = get_latest_run(guild.id)
-
-        if latest:
-            _, _, is_open = latest
-
-            if is_open:
-                return False
 
     # Create the run
     await create_run(guild)
@@ -620,12 +604,14 @@ async def scheduler():
     # -----------------------
     # 15 MINUTE RUN REMINDER
     # -----------------------
-    reminder_time = datetime.now(EST).replace(
-        hour=RUN_CLOSE_HOUR,
-        minute=RUN_CLOSE_MINUTE,
-        second=0,
-        microsecond=0
-    ) - timedelta(minutes=15)
+    reminder_time = (
+        datetime.now(EST).replace(
+            hour=RUN_CLOSE_HOUR,
+            minute=RUN_CLOSE_MINUTE,
+            second=0,
+            microsecond=0
+        ) - timedelta(minutes=15)
+    )
 
     if (
         now.hour == reminder_time.hour
@@ -637,40 +623,59 @@ async def scheduler():
         if latest_run:
             message_id, channel_id, is_open = latest_run
 
-            # Only remind for an open run
-            if is_open:
-                signups = load_signups(message_id)
+            signups = load_signups(message_id)
 
-                selected, waitlist = sort_and_split(signups)
+            selected, waitlist = sort_and_split(signups)
 
-                # Only remind if 6 or more are actually in the run
-                if len(selected) >= 6:
+            # Only remind if 6 or more people are in the run
+            if len(selected) >= 6:
 
-                    mentions = " ".join(
-                        f"<@{u['user_id']}>"
-                        for u in selected
+                mentions = " ".join(
+                    f"<@{u['user_id']}>"
+                    for u in selected
+                )
+
+                channel = guild.get_channel(channel_id)
+
+                if channel is None:
+                    channel = await guild.fetch_channel(channel_id)
+
+                # 6 people
+                if len(selected) == 6:
+                    reminder_message = (
+                        "6 people are ticked, maybe ping teach "
+                        f"{mentions}"
                     )
 
-                    channel = guild.get_channel(channel_id)
-
-                    if channel is None:
-                        channel = await guild.fetch_channel(channel_id)
-
-                    await channel.send(
-                        f"⏰ Run starts in 15 minutes! {mentions}"
+                # 7 people
+                elif len(selected) == 7:
+                    reminder_message = (
+                        "Just need 1 more "
+                        f"{mentions}"
                     )
 
-                    checkhaspinged = 1
-
-                    print(
-                        f"15-minute reminder sent in {guild.name}"
-                    )
-
+                # 8 people
                 else:
-                    print(
-                        f"15-minute reminder skipped - "
-                        f"only {len(selected)} people signed up."
+                    reminder_message = (
+                        "Run is full, 15 minute reminder "
+                        f"{mentions}"
                     )
+
+                await channel.send(reminder_message)
+
+                checkhaspinged = 1
+
+                print(
+                    f"15-minute reminder sent in {guild.name} "
+                    f"with {len(selected)} people."
+                )
+
+            else:
+                print(
+                    f"15-minute reminder skipped - "
+                    f"only {len(selected)} people signed up."
+                )
+
 
     # -----------------------
     # OPEN RUN
@@ -814,6 +819,25 @@ async def remove(ctx, member: discord.Member):
     await refresh_run_message(ctx.guild)
 
     await ctx.send(f"Removed {member.mention} from the run.")
+
+@bot.command()
+async def clearvars(ctx):
+
+    global checkhasposted
+    global checkhaspinged
+
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("Improper credentials idiot")
+        return
+
+    checkhasposted = 0
+    checkhaspinged = 0
+
+    await ctx.send(
+        "Check variables cleared.\n"
+        "checkhasposted = 0\n"
+        "checkhaspinged = 0"
+    )
 
 # ---------------------------
 # MEME COMMANDS
