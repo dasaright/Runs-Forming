@@ -1512,8 +1512,15 @@ async def on_ready():
     bot.add_view(FormView())
 
     try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
+        guild = discord.Object(id=GUILD_ID)
+
+        synced = await bot.tree.sync(guild=guild)
+
+        print(
+            f"Synced {len(synced)} slash commands "
+            f"to guild {GUILD_ID}."
+        )
+
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
 
