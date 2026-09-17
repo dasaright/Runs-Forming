@@ -144,12 +144,29 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS form_state (
     message_id INTEGER PRIMARY KEY,
     guild_id INTEGER,
-    channel_id INTEGER
+    channel_id INTEGER,
+    form_type TEXT,
+    close_timestamp INTEGER,
+    show_close_time INTEGER
 )
 """)
 
-conn.commit()
+try:
+    cursor.execute("ALTER TABLE form_state ADD COLUMN form_type TEXT")
+except sqlite3.OperationalError:
+    pass
 
+try:
+    cursor.execute("ALTER TABLE form_state ADD COLUMN close_timestamp INTEGER")
+except sqlite3.OperationalError:
+    pass
+
+try:
+    cursor.execute("ALTER TABLE form_state ADD COLUMN show_close_time INTEGER DEFAULT 0")
+except sqlite3.OperationalError:
+    pass
+
+conn.commit()
 # ---------------------------
 # DATABASE HELPERS
 # ---------------------------
@@ -256,20 +273,55 @@ def set_open_state(message_id, is_open):
     conn.commit()
 
 
-def set_form_state(message_id, guild_id, channel_id):
+def set_form_state(
+    message_id,
+    guild_id,
+    channel_id,
+    form_type,
+    close_timestamp=None,
+    show_close_time=False
+):
 
     cursor.execute("""
         INSERT OR REPLACE INTO form_state
-        VALUES (?, ?, ?)
+        (message_id, guild_id, channel_id, form_type,
+         close_timestamp, show_close_time)
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
         message_id,
         guild_id,
-        channel_id
+        channel_id,
+        form_type,
+        close_timestamp,
+        int(show_close_time)
     ))
 
     conn.commit()
 
 
+def get_form_state(message_id):
+
+    cursor.execute("""
+        SELECT guild_id, channel_id, form_type,
+               close_timestamp, show_close_time
+        FROM form_state
+        WHERE message_id=?
+    """, (message_id,))
+
+    return cursor.fetchone()
+
+def is_form_expired(message_id):
+    state = get_form_state(message_id)
+
+    if not state:
+        return False
+
+    _, _, _, close_timestamp, _ = state
+
+    if close_timestamp is None:
+        return False
+
+    return int(datetime.now(EST).timestamp()) >= close_timestamp
 # ---------------------------
 # LOGIC
 # ---------------------------
@@ -361,18 +413,41 @@ def build_embed(selected, waitlist, is_open):
 
     return embed
 
-def build_form_embed(selected, waitlist):
+def build_form_embed(
+    selected,
+    waitlist,
+    form_type="Guild",
+    close_timestamp=None,
+    show_close_time=False
+):
 
     embed = discord.Embed(
-        title="<:poggers:1413932730101665842> Guild Form"
+        title=f"<:poggers:1413932730101665842> Guild Form — {form_type}"
     )
+
+    # Only display the close time if the creator
+    # explicitly entered one.
+    if show_close_time and close_timestamp is not None:
+
+        now_timestamp = int(datetime.now(EST).timestamp())
+
+        if now_timestamp >= close_timestamp:
+            embed.description = "🔴 CLOSED"
+
+        else:
+            embed.description = (
+                f"Closes <t:{close_timestamp}:t>\n"
+                f"⏳ <t:{close_timestamp}:R>"
+            )
 
     signup_count = len(selected)
 
     if signup_count == 0:
         status = "🔴 nobody ticked"
+
     elif signup_count >= 6:
         status = f"🟢 {signup_count} ticked"
+
     else:
         status = f"🟠 {signup_count} ticked"
 
@@ -381,14 +456,17 @@ def build_form_embed(selected, waitlist):
         for u in selected
     )
 
+    if not roster:
+        roster = "\u200b"
+
     embed.add_field(
         name=status,
         value=roster,
         inline=False
     )
 
-    # Only show the waitlist once someone is actually on it
     if waitlist:
+
         wait = "\n".join(
             f"<@{u['user_id']}>"
             for u in waitlist
@@ -411,9 +489,25 @@ class FormView(discord.ui.View):
     async def refresh(self, interaction):
 
         signups = load_signups(interaction.message.id)
+
         selected, waitlist = sort_and_split(signups)
 
-        embed = build_form_embed(selected, waitlist)
+        state = get_form_state(interaction.message.id)
+
+        if state:
+            _, _, form_type, close_timestamp, show_close_time = state
+        else:
+            form_type = "Guild"
+            close_timestamp = None
+            show_close_time = False
+
+        embed = build_form_embed(
+            selected,
+            waitlist,
+            form_type,
+            close_timestamp,
+            bool(show_close_time)
+        )
 
         await interaction.message.edit(embed=embed)
 
@@ -423,6 +517,14 @@ class FormView(discord.ui.View):
         custom_id="join_form_button"
     )
     async def join(self, interaction, button):
+
+        if is_form_expired(interaction.message.id):
+            await interaction.response.send_message(
+                "🔴 This form has closed.",
+                ephemeral=True
+            )
+
+            return
 
         if not check_cooldown(interaction.user.id):
 
@@ -461,6 +563,14 @@ class FormView(discord.ui.View):
         custom_id="leave_form_button"
     )
     async def leave(self, interaction, button):
+
+        if is_form_expired(interaction.message.id):
+            await interaction.response.send_message(
+                "🔴 This form has closed.",
+                ephemeral=True
+            )
+
+            return
 
         if not check_cooldown(interaction.user.id):
 
@@ -608,10 +718,20 @@ async def create_run(guild, channel=None):
 
 
 async def create_form(ctx):
-
     channel = ctx.channel
 
-    embed = build_form_embed([], [])
+    # Custom forms expire after 24 hours
+    now = datetime.now(EST)
+    close_timestamp = int((now + timedelta(hours=24)).timestamp())
+
+    # Do not display the hidden 24-hour expiration
+    embed = build_form_embed(
+        [],
+        [],
+        "Guild",
+        close_timestamp,
+        False
+    )
 
     msg = await channel.send(
         embed=embed,
@@ -621,7 +741,10 @@ async def create_form(ctx):
     set_form_state(
         msg.id,
         ctx.guild.id,
-        channel.id
+        channel.id,
+        "Guild",
+        close_timestamp,
+        False
     )
 
     print(f"General form created in {ctx.guild.name}")
@@ -718,6 +841,84 @@ async def refresh_loop():
     for guild in bot.guilds:
         await refresh_run_message(guild)
 
+@tasks.loop(minutes=1)
+async def form_close_loop():
+
+    now_timestamp = int(datetime.now(EST).timestamp())
+
+    cursor.execute("""
+        SELECT message_id, guild_id, channel_id, form_type,
+               close_timestamp, show_close_time
+        FROM form_state
+        WHERE close_timestamp IS NOT NULL
+        AND close_timestamp <= ?
+    """, (now_timestamp,))
+
+    expired_forms = cursor.fetchall()
+
+    for (
+        message_id,
+        guild_id,
+        channel_id,
+        form_type,
+        close_timestamp,
+        show_close_time
+    ) in expired_forms:
+
+        guild = bot.get_guild(guild_id)
+
+        if guild is None:
+            continue
+
+        try:
+
+            channel = guild.get_channel(channel_id)
+
+            if channel is None:
+                channel = await guild.fetch_channel(channel_id)
+
+            message = await channel.fetch_message(message_id)
+
+            signups = load_signups(message_id)
+
+            selected, waitlist = sort_and_split(signups)
+
+            embed = build_form_embed(
+                selected,
+                waitlist,
+                form_type,
+                close_timestamp,
+                bool(show_close_time)
+            )
+
+            # The form has expired
+            embed.description = "🔴 CLOSED"
+
+            await message.edit(
+                embed=embed,
+                view=None
+            )
+
+            print(
+                f"Custom form {message_id} closed in {guild.name}"
+            )
+
+        except discord.NotFound:
+
+            print(
+                f"Custom form message {message_id} no longer exists."
+            )
+
+        except Exception as e:
+
+            print(
+                f"Could not close custom form {message_id}: {e}"
+            )
+
+@form_close_loop.before_loop
+async def before_form_close_loop():
+
+    await bot.wait_until_ready()
 
 @tasks.loop(minutes=1)
 async def start_run(guild, force=False):
@@ -899,18 +1100,141 @@ async def testrun(ctx):
     if not created:
         await ctx.send("A run is already open.")
 
+@bot.tree.command(
+    name="form",
+    description="Create a custom Guild form"
+)
+@discord.app_commands.describe(
+    form_type="Choose the type of run",
+    form_time="Optional close time, e.g. 14:30",
+    ping="Ping the DoA role"
+)
+@discord.app_commands.choices(
+    form_type=[
+        discord.app_commands.Choice(name="6-0", value="6-0"),
+        discord.app_commands.Choice(name="RoJ", value="RoJ"),
+        discord.app_commands.Choice(name="Offmeta", value="Offmeta"),
+        discord.app_commands.Choice(name="5-man", value="5-man")
+    ],
+    ping=[
+        discord.app_commands.Choice(name="No", value="no"),
+        discord.app_commands.Choice(name="Yes", value="yes")
+    ]
+)
+async def slash_form(
+    interaction: discord.Interaction,
+    form_type: discord.app_commands.Choice[str],
+    form_time: str = None,
+    ping: discord.app_commands.Choice[str] = None
+):
+
+    # Members and Officers can create forms
+    if not is_officer(interaction.user) and not is_guild_member(interaction.user):
+        await interaction.response.send_message(
+            "❌ Member role required.",
+            ephemeral=True
+        )
+        return
+
+    now = datetime.now(EST)
+
+    # Every custom form has a hidden maximum lifetime of 24 hours
+    max_close_time = now + timedelta(hours=24)
+
+    # Default: no close time is displayed
+    show_close_time = False
+
+    # Default hidden expiration is 24 hours
+    close_timestamp = int(max_close_time.timestamp())
+
+    # If a time was supplied, use that as the displayed close time
+    if form_time:
+        try:
+            parsed_time = datetime.strptime(form_time, "%H:%M")
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Invalid time. Use 24-hour format such as `14:30`.",
+                ephemeral=True
+            )
+            return
+
+        close_time = EST.localize(
+            datetime(
+                now.year,
+                now.month,
+                now.day,
+                parsed_time.hour,
+                parsed_time.minute
+            )
+        )
+
+        # If the requested time already passed today,
+        # interpret it as tomorrow
+        if close_time <= now:
+            close_time += timedelta(days=1)
+
+        # Never allow a form to live longer than 24 hours
+        if close_time > max_close_time:
+            close_time = max_close_time
+
+        close_timestamp = int(close_time.timestamp())
+        show_close_time = True
+
+    # Build the initial embed
+    embed = build_form_embed(
+        [],
+        [],
+        form_type.value,
+        close_timestamp,
+        show_close_time
+    )
+
+    await interaction.response.defer()
+
+    # Send the form itself
+    msg = await interaction.channel.send(
+        embed=embed,
+        view=FormView()
+    )
+
+    # Save the custom form
+    set_form_state(
+        msg.id,
+        interaction.guild.id,
+        interaction.channel.id,
+        form_type.value,
+        close_timestamp,
+        show_close_time
+    )
+
+    # Ping DoA if requested
+    if ping and ping.value == "yes":
+        await interaction.channel.send(
+            f"<@&{DOA_ROLE_ID}>"
+        )
+
+    await interaction.followup.send(
+        f"Created `{form_type.value}` form.",
+        ephemeral=True
+    )
+
+    print(
+        f"Custom form created in {interaction.guild.name}: "
+        f"{form_type.value}, close={close_timestamp}, "
+        f"ping={ping.value if ping else 'no'}"
+    )
+
 @bot.command()
 async def form(ctx):
 
-    if not is_officer(ctx.author):
-        await ctx.send("❌ Officer role required.")
+    if not is_officer(ctx.author) and not is_guild_member(ctx.author):
+        await ctx.send("❌ Member role required.")
         return
 
     created = await create_form(ctx)
 
     if not created:
         await ctx.send("Could not create the form.")
-
 
 @bot.command()
 async def add(ctx, target: str):
@@ -1187,6 +1511,12 @@ async def on_ready():
     bot.add_view(RunView())
     bot.add_view(FormView())
 
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(f"Failed to sync slash commands: {e}")
+
     await restore_current_run()
 
     if not refresh_loop.is_running():
@@ -1195,6 +1525,8 @@ async def on_ready():
     if not scheduler.is_running():
         scheduler.start()
 
+    if not form_close_loop.is_running():
+        form_close_loop.start()
 
 # ---------------------------
 # START BOT
