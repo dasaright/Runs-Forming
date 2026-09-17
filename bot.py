@@ -139,6 +139,15 @@ CREATE TABLE IF NOT EXISTS run_state (
 )
 """)
 
+# General !form posts are stored separately from scheduled daily runs.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS form_state (
+    message_id INTEGER PRIMARY KEY,
+    guild_id INTEGER,
+    channel_id INTEGER
+)
+""")
+
 conn.commit()
 
 # ---------------------------
@@ -247,6 +256,20 @@ def set_open_state(message_id, is_open):
     conn.commit()
 
 
+def set_form_state(message_id, guild_id, channel_id):
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO form_state
+        VALUES (?, ?, ?)
+    """, (
+        message_id,
+        guild_id,
+        channel_id
+    ))
+
+    conn.commit()
+
+
 # ---------------------------
 # LOGIC
 # ---------------------------
@@ -315,12 +338,7 @@ def build_embed(selected, waitlist, is_open):
     roster = "\n".join(
         f"<@{u['user_id']}>"
         for u in selected
-    ) or "None"
-
-    wait = "\n".join(
-        f"<@{u['user_id']}>"
-        for u in waitlist
-    ) or "None"
+    )
 
     embed.add_field(
         name=status,
@@ -328,13 +346,139 @@ def build_embed(selected, waitlist, is_open):
         inline=False
     )
 
+    # Only show the waitlist once someone is actually waiting
+    if waitlist:
+        wait = "\n".join(
+            f"<@{u['user_id']}>"
+            for u in waitlist
+        )
+
+        embed.add_field(
+            name="<:fradge:1238196826784530452> Waitlist",
+            value=wait,
+            inline=False
+        )
+
+    return embed
+
+def build_form_embed(selected, waitlist):
+
+    embed = discord.Embed(
+        title="<:poggers:1413932730101665842> Guild Form"
+    )
+
+    signup_count = len(selected)
+
+    if signup_count == 0:
+        status = "🔴 nobody ticked"
+    elif signup_count >= 6:
+        status = f"🟢 {signup_count} ticked"
+    else:
+        status = f"🟠 {signup_count} ticked"
+
+    roster = "\n".join(
+        f"<@{u['user_id']}>"
+        for u in selected
+    )
+
     embed.add_field(
-        name="<:fradge:1238196826784530452> Waitlist",
-        value=wait,
+        name=status,
+        value=roster,
         inline=False
     )
 
+    # Only show the waitlist once someone is actually on it
+    if waitlist:
+        wait = "\n".join(
+            f"<@{u['user_id']}>"
+            for u in waitlist
+        )
+
+        embed.add_field(
+            name="<:fradge:1238196826784530452> Waitlist",
+            value=wait,
+            inline=False
+        )
+
     return embed
+
+
+class FormView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def refresh(self, interaction):
+
+        signups = load_signups(interaction.message.id)
+        selected, waitlist = sort_and_split(signups)
+
+        embed = build_form_embed(selected, waitlist)
+
+        await interaction.message.edit(embed=embed)
+
+    @discord.ui.button(
+        label="Join Form",
+        style=discord.ButtonStyle.green,
+        custom_id="join_form_button"
+    )
+    async def join(self, interaction, button):
+
+        if not check_cooldown(interaction.user.id):
+
+            await interaction.response.send_message(
+                "⏳ Slow down — you’re clicking too fast.",
+                ephemeral=True
+            )
+
+            return
+
+        current = load_signups(interaction.message.id)
+
+        if any(u["user_id"] == interaction.user.id for u in current):
+
+            await interaction.response.send_message(
+                "Already signed up.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.defer()
+
+        add_signup(
+            interaction.message.id,
+            interaction.user.id,
+            interaction.user.name,
+            is_guild_member(interaction.user)
+        )
+
+        await self.refresh(interaction)
+
+    @discord.ui.button(
+        label="Leave Form",
+        style=discord.ButtonStyle.red,
+        custom_id="leave_form_button"
+    )
+    async def leave(self, interaction, button):
+
+        if not check_cooldown(interaction.user.id):
+
+            await interaction.response.send_message(
+                "⏳ Slow down — you’re clicking too fast.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.defer()
+
+        remove_signup(
+            interaction.message.id,
+            interaction.user.id
+        )
+
+        await self.refresh(interaction)
 
 
 # ---------------------------
@@ -426,17 +570,17 @@ class RunView(discord.ui.View):
 # ---------------------------
 # RUN MANAGEMENT
 # ---------------------------
-async def create_run(guild):
-
-
-    channel = guild.get_channel(RUN_CHANNEL_ID)
+async def create_run(guild, channel=None):
 
     if channel is None:
-        channel = await guild.fetch_channel(RUN_CHANNEL_ID)
+        channel = guild.get_channel(RUN_CHANNEL_ID)
+
+        if channel is None:
+            channel = await guild.fetch_channel(RUN_CHANNEL_ID)
 
     if channel is None:
         print("Run channel not found.")
-        return
+        return False
 
     embed = build_embed([], [], True)
 
@@ -460,6 +604,28 @@ async def create_run(guild):
 
     print(f"Run created in {guild.name}")
 
+    return True
+
+
+async def create_form(ctx):
+
+    channel = ctx.channel
+
+    embed = build_form_embed([], [])
+
+    msg = await channel.send(
+        embed=embed,
+        view=FormView()
+    )
+
+    set_form_state(
+        msg.id,
+        ctx.guild.id,
+        channel.id
+    )
+
+    print(f"General form created in {ctx.guild.name}")
+    return True
 
 async def refresh_run_message(guild):
 
@@ -725,17 +891,26 @@ async def before_refresh():
 async def testrun(ctx):
 
     if not is_officer(ctx.author):
-
-        await ctx.send(
-            "❌ Officer role required."
-        )
-
+        await ctx.send("❌ Officer role required.")
         return
 
-    created = await start_run(ctx.guild, force=True)
+    created = await create_run(ctx.guild, channel=ctx.channel)
 
     if not created:
         await ctx.send("A run is already open.")
+
+@bot.command()
+async def form(ctx):
+
+    if not is_officer(ctx.author):
+        await ctx.send("❌ Officer role required.")
+        return
+
+    created = await create_form(ctx)
+
+    if not created:
+        await ctx.send("Could not create the form.")
+
 
 @bot.command()
 async def add(ctx, member: discord.Member):
@@ -977,6 +1152,7 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
     bot.add_view(RunView())
+    bot.add_view(FormView())
 
     await restore_current_run()
 
@@ -991,5 +1167,5 @@ async def on_ready():
 # START BOT
 # ---------------------------
 
+#
 bot.run(os.getenv("DISCORD_TOKEN"))
-#bot.run(" ")
