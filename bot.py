@@ -913,11 +913,27 @@ async def form(ctx):
 
 
 @bot.command()
-async def add(ctx, member: discord.Member):
+async def add(ctx, target: str):
 
     # Only the bot owner can use this command
     if ctx.author.id != BOT_OWNER_ID:
         await ctx.send("Improper credentials idiot")
+        return
+
+    # Try to get the member from a mention
+    member = None
+
+    if ctx.message.mentions:
+        member = ctx.message.mentions[0]
+
+    # If no mention, try to interpret the target as a Discord user ID
+    elif target.isdigit():
+        member = ctx.guild.get_member(int(target))
+
+    if member is None:
+        await ctx.send(
+            "Couldn't find that user. Use @mention or their Discord user ID."
+        )
         return
 
     # Get the latest run
@@ -938,7 +954,7 @@ async def add(ctx, member: discord.Member):
     current = load_signups(message_id)
 
     if any(u["user_id"] == member.id for u in current):
-        await ctx.send(f"{member.mention} is already ticked.")
+        await ctx.send(f"{member.name} is already ticked.")
         return
 
     # Add them using the same system as the Join Run button
@@ -952,15 +968,31 @@ async def add(ctx, member: discord.Member):
     # Refresh the form
     await refresh_run_message(ctx.guild)
 
-    await ctx.send(f"Added {member.mention} to the run.")
-
+    # Don't ping the user in the private command channel
+    await ctx.send(f"Added {member.name} to the run.")
 
 @bot.command()
-async def remove(ctx, member: discord.Member):
+async def remove(ctx, target: str):
 
     # Only the bot owner can use this command
     if ctx.author.id != BOT_OWNER_ID:
         await ctx.send("Improper credentials idiot")
+        return
+
+    # Try to get the member from a mention
+    member = None
+
+    if ctx.message.mentions:
+        member = ctx.message.mentions[0]
+
+    # If no mention, try to interpret the target as a Discord user ID
+    elif target.isdigit():
+        member = ctx.guild.get_member(int(target))
+
+    if member is None:
+        await ctx.send(
+            "Couldn't find that user. Use @mention or their Discord user ID."
+        )
         return
 
     # Get the latest run
@@ -981,7 +1013,7 @@ async def remove(ctx, member: discord.Member):
     current = load_signups(message_id)
 
     if not any(u["user_id"] == member.id for u in current):
-        await ctx.send(f"{member.mention} isn't currently ticked.")
+        await ctx.send(f"{member.name} isn't currently ticked.")
         return
 
     # Remove them
@@ -993,7 +1025,8 @@ async def remove(ctx, member: discord.Member):
     # Refresh the form
     await refresh_run_message(ctx.guild)
 
-    await ctx.send(f"Removed {member.mention} from the run.")
+    # Don't ping the user in the private command channel
+    await ctx.send(f"Removed {member.name} from the run.")
 
 @bot.command()
 async def clearvars(ctx):
