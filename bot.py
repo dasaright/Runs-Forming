@@ -127,7 +127,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ---------------------------
 # DATABASE
 # ---------------------------
-conn = sqlite3.connect("runs.db", check_same_thread=False)
+conn = sqlite3.connect("/data/runs.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
