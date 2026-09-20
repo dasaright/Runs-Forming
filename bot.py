@@ -10,7 +10,9 @@ import pytz
 # ---------------------------
 # CONFIG
 # ---------------------------
+
 EST = pytz.timezone("US/Eastern")
+DEFAULT_TIMEZONE = "Europe/Berlin"
 
 BOT_OWNER_ID = 218880619659132928
 DOA_ROLE_ID = 1199301817738211338
@@ -66,6 +68,14 @@ def get_time_until_open():
 
     return hours, minutes
 
+def get_form_capacity(form_type):
+    if form_type == "5-man":
+        return 5
+
+    if form_type in ("Deep", "Urgoz"):
+        return 12
+
+    return 8
 
 def get_run_timestamp():
 
@@ -139,6 +149,15 @@ CREATE TABLE IF NOT EXISTS run_state (
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS user_timezones (
+    user_id INTEGER PRIMARY KEY,
+    timezone TEXT NOT NULL
+)
+""")
+
+conn.commit()
+
 # General !form posts are stored separately from scheduled daily runs.
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS form_state (
@@ -147,7 +166,8 @@ CREATE TABLE IF NOT EXISTS form_state (
     channel_id INTEGER,
     form_type TEXT,
     close_timestamp INTEGER,
-    show_close_time INTEGER
+    show_close_time INTEGER,
+    formed_pinged INTEGER DEFAULT 0
 )
 """)
 
@@ -163,6 +183,13 @@ except sqlite3.OperationalError:
 
 try:
     cursor.execute("ALTER TABLE form_state ADD COLUMN show_close_time INTEGER DEFAULT 0")
+except sqlite3.OperationalError:
+    pass
+
+try:
+    cursor.execute(
+        "ALTER TABLE form_state ADD COLUMN formed_pinged INTEGER DEFAULT 0"
+    )
 except sqlite3.OperationalError:
     pass
 
@@ -285,8 +312,8 @@ def set_form_state(
     cursor.execute("""
         INSERT OR REPLACE INTO form_state
         (message_id, guild_id, channel_id, form_type,
-         close_timestamp, show_close_time)
-        VALUES (?, ?, ?, ?, ?, ?)
+         close_timestamp, show_close_time, formed_pinged)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
     """, (
         message_id,
         guild_id,
@@ -300,14 +327,12 @@ def set_form_state(
 
 
 def get_form_state(message_id):
-
     cursor.execute("""
         SELECT guild_id, channel_id, form_type,
-               close_timestamp, show_close_time
+               close_timestamp, show_close_time, formed_pinged
         FROM form_state
         WHERE message_id=?
     """, (message_id,))
-
     return cursor.fetchone()
 
 def is_form_expired(message_id):
@@ -316,16 +341,49 @@ def is_form_expired(message_id):
     if not state:
         return False
 
-    _, _, _, close_timestamp, _ = state
+    _, _, _, close_timestamp, _, _ = state
 
     if close_timestamp is None:
         return False
 
-    return int(datetime.now(EST).timestamp()) >= close_timestamp
+    return int(time.time()) >= close_timestamp
+
+def set_user_timezone(user_id, timezone_name):
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO user_timezones
+        (user_id, timezone)
+        VALUES (?, ?)
+    """, (
+        user_id,
+        timezone_name
+    ))
+
+    conn.commit()
+
+
+def get_user_timezone(user_id):
+
+    cursor.execute("""
+        SELECT timezone
+        FROM user_timezones
+        WHERE user_id=?
+    """, (user_id,))
+
+    row = cursor.fetchone()
+
+    if row:
+        try:
+            return pytz.timezone(row[0])
+        except pytz.UnknownTimeZoneError:
+            pass
+
+    return pytz.timezone(DEFAULT_TIMEZONE)
+
 # ---------------------------
 # LOGIC
 # ---------------------------
-def sort_and_split(signups):
+def sort_and_split(signups, capacity=8):
 
     sorted_list = sorted(
         signups,
@@ -335,7 +393,7 @@ def sort_and_split(signups):
         )
     )
 
-    return sorted_list[:8], sorted_list[8:]
+    return sorted_list[:capacity], sorted_list[capacity:]
 
 
 def build_embed(selected, waitlist, is_open):
@@ -441,8 +499,12 @@ def build_form_embed(
             )
 
     signup_count = len(selected)
+    capacity = get_form_capacity(form_type)
 
-    if signup_count == 0:
+    if signup_count >= capacity:
+        status = "🟢 Formed"
+
+    elif signup_count == 0:
         status = "🔴 nobody ticked"
 
     elif signup_count >= 6:
@@ -490,16 +552,22 @@ class FormView(discord.ui.View):
 
         signups = load_signups(interaction.message.id)
 
-        selected, waitlist = sort_and_split(signups)
-
         state = get_form_state(interaction.message.id)
 
         if state:
-            _, _, form_type, close_timestamp, show_close_time = state
+            _, _, form_type, close_timestamp, show_close_time, formed_pinged = state
         else:
             form_type = "Guild"
             close_timestamp = None
             show_close_time = False
+            formed_pinged = False
+
+        capacity = get_form_capacity(form_type)
+
+        selected, waitlist = sort_and_split(
+            signups,
+            capacity
+        )
 
         embed = build_form_embed(
             selected,
@@ -509,7 +577,41 @@ class FormView(discord.ui.View):
             bool(show_close_time)
         )
 
-        await interaction.message.edit(embed=embed)
+        await interaction.message.edit(
+            embed=embed
+        )
+
+        # Form once the correct capacity has been reached.
+        if (
+                len(selected) >= capacity
+                and not formed_pinged
+        ):
+
+            mentions = " ".join(
+                f"<@{u['user_id']}>"
+                for u in selected
+            )
+
+            # Only one interaction is allowed to claim
+            # the formation ping.
+            cursor.execute("""
+                UPDATE form_state
+                SET formed_pinged=1
+                WHERE message_id=?
+                AND formed_pinged=0
+            """, (interaction.message.id,))
+
+            conn.commit()
+
+            if cursor.rowcount == 1:
+                await interaction.channel.send(
+                    f"🟢 **{form_type} Formed!** {mentions}"
+                )
+
+                print(
+                    f"{form_type} form {interaction.message.id} formed "
+                    f"with {len(selected)} members."
+                )
 
     @discord.ui.button(
         label="Join Form",
@@ -601,15 +703,24 @@ class RunView(discord.ui.View):
 
     async def refresh(self, interaction):
 
+        # Scheduled daily runs always use the normal 8-player
+        # scheduled-run logic.
         signups = load_signups(interaction.message.id)
 
         selected, waitlist = sort_and_split(signups)
 
         state = get_run_state(interaction.message.id)
 
-        is_open = True if state else False
+        if state:
+            _, _, is_open = state
+        else:
+            is_open = False
 
-        embed = build_embed(selected, waitlist, is_open)
+        embed = build_embed(
+            selected,
+            waitlist,
+            bool(is_open)
+        )
 
         await interaction.message.edit(embed=embed)
 
@@ -631,7 +742,10 @@ class RunView(discord.ui.View):
 
         current = load_signups(interaction.message.id)
 
-        if any(u["user_id"] == interaction.user.id for u in current):
+        if any(
+            u["user_id"] == interaction.user.id
+            for u in current
+        ):
 
             await interaction.response.send_message(
                 "Already signed up.",
@@ -820,7 +934,7 @@ async def close_run(guild):
         False
     )
 
-    embed.title = "🏃 Daily Run CLOSED"
+    embed.title = "<:poggers:1413932730101665842> Guild Runs"
 
     await message.edit(
         embed=embed,
@@ -844,7 +958,7 @@ async def refresh_loop():
 @tasks.loop(minutes=1)
 async def form_close_loop():
 
-    now_timestamp = int(datetime.now(EST).timestamp())
+    now_timestamp = int(time.time())
 
     cursor.execute("""
         SELECT message_id, guild_id, channel_id, form_type,
@@ -871,7 +985,6 @@ async def form_close_loop():
             continue
 
         try:
-
             channel = guild.get_channel(channel_id)
 
             if channel is None:
@@ -881,7 +994,9 @@ async def form_close_loop():
 
             signups = load_signups(message_id)
 
-            selected, waitlist = sort_and_split(signups)
+            capacity = get_form_capacity(form_type)
+
+            selected, waitlist = sort_and_split(signups, capacity)
 
             embed = build_form_embed(
                 selected,
@@ -891,7 +1006,6 @@ async def form_close_loop():
                 bool(show_close_time)
             )
 
-            # The form has expired
             embed.description = "🔴 CLOSED"
 
             await message.edit(
@@ -899,18 +1013,35 @@ async def form_close_loop():
                 view=None
             )
 
+            # Give Discord a moment before closing another form
+            await asyncio.sleep(1)
+
+            # IMPORTANT:
+            # Remove it from the active form list so it isn't
+            # processed again on the next loop.
+            cursor.execute(
+                "DELETE FROM form_state WHERE message_id=?",
+                (message_id,)
+            )
+            conn.commit()
+
             print(
                 f"Custom form {message_id} closed in {guild.name}"
             )
 
         except discord.NotFound:
-
             print(
                 f"Custom form message {message_id} no longer exists."
             )
 
-        except Exception as e:
+            # Also remove nonexistent forms from the database
+            cursor.execute(
+                "DELETE FROM form_state WHERE message_id=?",
+                (message_id,)
+            )
+            conn.commit()
 
+        except Exception as e:
             print(
                 f"Could not close custom form {message_id}: {e}"
             )
@@ -1101,6 +1232,80 @@ async def testrun(ctx):
         await ctx.send("A run is already open.")
 
 @bot.tree.command(
+    name="timezone",
+    description="Set your timezone for scheduling forms"
+)
+@discord.app_commands.describe(
+    timezone="Choose your timezone"
+)
+@discord.app_commands.choices(
+    timezone=[
+        discord.app_commands.Choice(
+            name="CET / Berlin",
+            value="Europe/Berlin"
+        ),
+        discord.app_commands.Choice(
+            name="Bulgaria / Sofia",
+            value="Europe/Sofia"
+        ),
+        discord.app_commands.Choice(
+            name="UK / London",
+            value="Europe/London"
+        ),
+        discord.app_commands.Choice(
+            name="Eastern / New York",
+            value="America/New_York"
+        ),
+        discord.app_commands.Choice(
+            name="Central / Chicago",
+            value="America/Chicago"
+        ),
+        discord.app_commands.Choice(
+            name="Mountain / Denver",
+            value="America/Denver"
+        ),
+        discord.app_commands.Choice(
+            name="Pacific / Los Angeles",
+            value="America/Los_Angeles"
+        ),
+        discord.app_commands.Choice(
+            name="UTC",
+            value="UTC"
+        )
+    ]
+)
+async def timezone(
+    interaction: discord.Interaction,
+    timezone: discord.app_commands.Choice[str]
+):
+
+    timezone_name = timezone.value
+
+    # Verify that the timezone is valid
+    try:
+        pytz.timezone(timezone_name)
+    except pytz.UnknownTimeZoneError:
+        await interaction.response.send_message(
+            "❌ Invalid timezone.",
+            ephemeral=True
+        )
+        return
+
+    set_user_timezone(
+        interaction.user.id,
+        timezone_name
+    )
+
+    await interaction.response.send_message(
+        f"✅ Your timezone has been set to **{timezone.name}**.",
+        ephemeral=True
+    )
+
+    print(
+        f"{interaction.user} set timezone to {timezone_name}"
+    )
+
+@bot.tree.command(
     name="form",
     description="Create a custom Guild form"
 )
@@ -1114,7 +1319,11 @@ async def testrun(ctx):
         discord.app_commands.Choice(name="6-0", value="6-0"),
         discord.app_commands.Choice(name="RoJ", value="RoJ"),
         discord.app_commands.Choice(name="Offmeta", value="Offmeta"),
-        discord.app_commands.Choice(name="5-man", value="5-man")
+        discord.app_commands.Choice(name="5-man", value="5-man"),
+        discord.app_commands.Choice(name="UW", value="UW"),
+        discord.app_commands.Choice(name="FoW", value="FoW"),
+        discord.app_commands.Choice(name="Deep", value="Deep"),
+        discord.app_commands.Choice(name="Urgoz", value="Urgoz")
     ],
     ping=[
         discord.app_commands.Choice(name="No", value="no"),
@@ -1136,7 +1345,9 @@ async def slash_form(
         )
         return
 
-    now = datetime.now(EST)
+    user_timezone = get_user_timezone(interaction.user.id)
+
+    now = datetime.now(user_timezone)
 
     # Every custom form has a hidden maximum lifetime of 24 hours
     max_close_time = now + timedelta(hours=24)
@@ -1158,7 +1369,7 @@ async def slash_form(
             )
             return
 
-        close_time = EST.localize(
+        close_time = user_timezone.localize(
             datetime(
                 now.year,
                 now.month,
@@ -1512,14 +1723,14 @@ async def on_ready():
     bot.add_view(FormView())
 
     try:
-        guild = discord.Object(id=GUILD_ID)
-
-        synced = await bot.tree.sync(guild=guild)
+        synced = await bot.tree.sync()
 
         print(
-            f"Synced {len(synced)} slash commands "
-            f"to guild {GUILD_ID}."
+            f"Synced {len(synced)} global slash commands."
         )
+
+        for command in synced:
+            print(f"  /{command.name}")
 
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
